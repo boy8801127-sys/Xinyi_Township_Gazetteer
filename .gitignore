@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# 論文 PDF 與產出（不上傳）
+paper/
+output/
+
+# This_plan：僅保留 .json，其餘不上傳
+This_plan/*
+!This_plan/*.json
