@@ -7,14 +7,24 @@
 - **分類流程**：擷取 PDF → 切分標註 → 依類別關鍵字標籤 → 匯出各類別 CSV
 - **LLM 段落匯出**：從 PDF 擷取摘要與內文段落，產出 `paragraphs_all.csv` 供 LLM 使用
 - **手動合併**：將 ID 為空的列與上一列合併（適用於 Excel 合併儲存格後匯出）
+- **Notion 自動分類**：呼叫 **Claude API** 對 Notion 資料庫中的段落做分類與關鍵字擷取，透過提示語工程讓回覆格式化為固定 JSON schema，再自動寫回 Notion 對應欄位（詳見〈[Notion 自動分類](#notion-自動分類claude-api)〉）
 
 ## 環境
 
 - Python 3.10+
-- 依賴：PyMuPDF
+- 依賴：PyMuPDF、openpyxl、anthropic、notion-client、python-dotenv
 
 ```bash
 pip install -r requirements.txt
+```
+
+若要使用 Notion 自動分類流程，需在專案根目錄建立 `.env`（**不會被版控追蹤**）：
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-xxxxx
+NOTION_API_KEY=ntn_xxxxx
+NOTION_DATABASE_ID_1=xxxxxxxx      # Notion 頁面 1（內含多個 child_database）
+NOTION_DATABASE_ID_2=xxxxxxxx      # Notion 頁面 2（選用，--all 才需要）
 ```
 
 或使用虛擬環境：
@@ -73,20 +83,74 @@ python main.py
 
 - `output/paragraphs_all_merged.csv`：合併後的段落，ID 保留群組第一列
 
+## Notion 自動分類（Claude API）
+
+段落匯出到 Notion 後，用 **Claude API**（`claude-haiku-4-5`）逐段判斷所屬篇章並擷取關鍵字，寫回 Notion 的「分類」「分類原因」「關鍵字」欄位，取代人工逐筆分類。
+
+### 提示語工程：讓回覆公式化
+
+分類品質與可解析性主要靠 `notion_classify.py` 裡的 `SYSTEM_PROMPT` 控制：
+
+- **鎖定角色與範圍**：系統提示詞開頭固定「你是《南投縣信義鄉志》的編纂助理」，並把 `This_plan/類別.txt`（分類清單）與 `This_plan/信義鄉志架構分類.txt`（各篇章內容範圍）整段塞入提示詞，讓 Claude 分類時有依據，不是憑空猜測。
+- **明確的輸出規則**：規定最多選 1～2 個分類、分類原因限制 20～50 字、關鍵字限制 3～5 個，並要求「只輸出純 JSON，不加任何說明文字」。
+- **Few-shot 範例固定格式**：提示詞內附上「單一分類」與「跨兩分類」兩組範例 JSON，讓模型的回覆格式高度一致，方便程式直接 `json.loads` 解析，不需額外做自然語言擷取。
+- **程式端二次防呆**（`_parse_claude_json` / `_normalize_category`）：即使模型吐出的分類名稱有些微出入（漏字、多字），也會用前綴比對修正回合法分類；`reason` 超長會截斷、`keywords` 超過 5 個會截斷，避免寫入 Notion 時因格式不符而失敗。
+
+### 執行模式
+
+```bash
+python notion_classify.py --first-only --dry-run   # 先預覽第一個 Notion 資料庫的分類結果，不寫入
+python notion_classify.py --first-only              # 確認無誤後，寫入第一個資料庫
+python notion_classify.py --all                     # 即時模式，處理兩個頁面下的全部論文
+python notion_classify.py --all --batch              # Batch 模式，費用省 50%（見下）
+python notion_classify.py --submit-all               # 一次送出所有論文的 batch，不等待
+python notion_classify.py --collect-all               # 輪詢所有 batch，完成後統一寫回 Notion
+python notion_classify.py --batch-resume <batch_id>   # 續跑中斷的 batch
+python notion_classify.py --apply-local results/xxx.json  # 只補寫尚未成功寫入 Notion 的記錄
+```
+
+### Batch API：大量處理省 50% 費用
+
+`--batch` 會改用 Claude 的 Message Batches API 非同步送出整批段落，等全部處理完再一次收回結果，Input/Output token 單價都是即時 API 的一半。`calc_cost.py <batch_id>` 可查詢指定 batch 的實際 token 用量並試算美金／台幣費用。
+
+### 容錯與斷點續傳
+
+- 每個 Notion child_database 對應一份 `results/*.json` 本地快取，內含每筆段落的分類結果與 `written_to_notion` 狀態；**每處理完一筆就落地存檔**，中途斷線也不會遺失已完成的分類。
+- 重新執行時只會處理 `written_to_notion=false` 的記錄，不會重複呼叫 Claude 或重複寫入 Notion。
+- `fix_errors.py` 用來針對性修復少數寫入失敗的記錄（例如關鍵字含逗號被 Notion multi-select 拒絕、或寫入當下網路中斷），會重用 `notion_classify.py` 的分類與寫入函式。
+- 首次執行會自動在 Notion 資料庫新增「分類」「分類原因」「關鍵字」三個欄位（`ensure_data_source_properties`），不用手動建欄位。
+
+### 輔助腳本
+
+| 腳本 | 用途 |
+|------|------|
+| `src/split_and_merge_paragraphs_xlsx.py` | 匯出的段落 xlsx 後處理：合併孤兒空白 ID、依 `P{論文序號}` 分篇、合併跨列的段落／頁數，輸出各篇 xlsx 與合併總檔 |
+| `calc_cost.py` | 查詢指定 batch 的 token 用量，試算 Claude Batch API 費用 |
+| `fix_errors.py` | 修復個別寫入失敗的分類記錄 |
+
+> `results/`、`batch_states/`、`.env` 皆為執行過程產物與機密設定，已列入 `.gitignore`，不會上傳版控。
+
 ## 目錄結構
 
 ```
 Xinyi_Township_Gazetteer/
 ├── main.py              # 互動式入口
+├── notion_classify.py   # Notion 自動分類（Claude API）
+├── fix_errors.py         # 修復個別寫入失敗的分類記錄
+├── calc_cost.py           # Batch API 用量與費用試算
 ├── requirements.txt
-├── paper/               # 論文 PDF（輸入）
-├── output/              # 產出 CSV
-├── This_plan/           # 類別與關鍵字設定
+├── .env                  # Claude／Notion API 金鑰（不上傳版控）
+├── paper/                # 論文 PDF（輸入，不上傳版控）
+├── output/                # 產出 CSV（不上傳版控）
+├── results/                # Notion 分類本地快取（不上傳版控）
+├── batch_states/            # Batch API 送出狀態（不上傳版控）
+├── This_plan/            # 類別與關鍵字設定
 └── src/
-    ├── extract_pdf.py           # PDF 擷取
-    ├── segment_and_annotate.py  # 切分與標註
-    ├── classify_and_export.py   # 分類匯出
-    ├── export_paragraphs.py     # LLM 段落匯出
-    ├── export_paragraphs_v1.py  # 段落擷取（狀態機工作流）
-    └── merge_paragraph_rows.py  # 手動合併處理
+    ├── extract_pdf.py               # PDF 擷取
+    ├── segment_and_annotate.py      # 切分與標註
+    ├── classify_and_export.py       # 分類匯出
+    ├── export_paragraphs.py         # LLM 段落匯出
+    ├── export_paragraphs_v1.py      # 段落擷取（狀態機工作流）
+    ├── merge_paragraph_rows.py      # 手動合併處理
+    └── split_and_merge_paragraphs_xlsx.py  # 段落 xlsx 分篇／合併後處理
 ```
