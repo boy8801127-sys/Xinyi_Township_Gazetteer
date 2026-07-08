@@ -17,3 +17,9 @@ output/
 # This_plan：僅保留 .json，其餘不上傳
 This_plan/*
 !This_plan/*.json
+
+# 機密與最終結果檔（不上傳）
+.env
+batch_states/
+final_file/
+results/
