@@ -9,15 +9,18 @@
 - **手動合併**：將 ID 為空的列與上一列合併（適用於 Excel 合併儲存格後匯出）
 - **Notion 自動分類**：呼叫 **Claude API** 對 Notion 資料庫中的段落做分類與關鍵字擷取，透過提示語工程讓回覆格式化為固定 JSON schema，再自動寫回 Notion 對應欄位（詳見〈[Notion 自動分類](#notion-自動分類claude-api)〉）
 - **RAG 鄉志編纂問答助手**：用 **LlamaIndex + Chroma + Voyage embeddings** 把已分類段落建成向量索引，可用自然語言提問並取得附引用來源（論文＋頁碼）的回答，也可做純語意檢索（詳見〈[RAG 進階實驗](#rag-進階實驗llamaindex--chroma--voyage)〉）
+- **LangChain 動態 Few-shot 分類 Chain**：用 **LangChain（LCEL）**串接 RAG 檢索與 Claude 結構化輸出，讓分類 prompt 的 few-shot 範例依待分類段落動態抽換，取代固定範例（詳見〈[LangChain 動態 Few-shot 分類 Chain](#langchain-動態-few-shot-分類-chain)〉）
 
 ## 環境
 
 - Python 3.10+
-- 依賴：PyMuPDF、openpyxl、anthropic、notion-client、python-dotenv、llama-index、chromadb、voyageai
+- 依賴：PyMuPDF、openpyxl、anthropic、notion-client、python-dotenv、llama-index、chromadb、voyageai、langchain-core、langchain-anthropic
 
 ```bash
 pip install -r requirements.txt
 ```
+
+> Windows 繁體中文系統若安裝時出現 `UnicodeDecodeError: 'cp950' codec can't decode ...`（`requirements.txt` 內含中文註解），改用 `PYTHONUTF8=1 pip install -r requirements.txt` 即可。
 
 若要使用 Notion 自動分類流程或 RAG 進階實驗，需在專案根目錄建立 `.env`（**不會被版控追蹤**）：
 
@@ -170,6 +173,70 @@ python -m src.rag.query_engine --search "部落產業" --category 經濟篇
 
 > `labeled_corpus.jsonl`、`vectorstore/` 皆為可重新產生的執行產物，已列入 `.gitignore`。
 
+## LangChain 動態 Few-shot 分類 Chain
+
+在 RAG 模組之上，再做一個**平行的實驗性模組**，示範用 **LangChain（LCEL）**編排「檢索 → 組 prompt → 結構化輸出」的分類流程，一樣不影響、也不依賴正式的 `notion_classify.py` 分類流程，純作技術示範。
+
+### 動機
+
+`notion_classify.py` 對每個段落分類時，prompt 裡固定寫死兩組 few-shot 範例，不論待分類段落內容為何都套用同一組；輸出解析也是手刻的 JSON 解析＋分類名稱修正邏輯。這個模組改用：
+
+- **動態 few-shot**：每次分類前，先用 RAG 模組的 `search_similar()` 找出跟待分類段落語意最相近、且已完成分類的真實範例，取代寫死的固定範例，讓範例更貼近實際待分類內容。
+- **結構化輸出（`with_structured_output`）**：用 Pydantic schema 定義分類結果，`categories` 欄位在型別層級就限制只能是分類清單中的合法名稱，不需要再靠字串前綴比對做二次修正。
+
+### 有無 LangChain 的差異
+
+| 項目 | 沒有 LangChain（`notion_classify.py` 既有流程） | 有 LangChain（`classify_chain.py`） |
+|------|------------------------------------------------|--------------------------------------|
+| Few-shot 範例 | 寫死在 `SYSTEM_PROMPT` 裡固定 2 組範例，所有段落共用 | 每次即時用 RAG 檢索跟段落語意最相近的真實已分類範例，逐段動態抽換 |
+| 輸出格式保證 | 手寫 `_parse_claude_json()` + `_normalize_category()`，靠字串前綴比對修正模型吐錯的分類名稱 | Pydantic schema + `with_structured_output()`，`categories` 在型別層級就限制為合法分類名稱，不需二次修正 |
+| 流程串接方式 | 函式依序手動呼叫（送 prompt → parse → normalize → 寫入 Notion） | 用 LCEL（`\|` 運算子）把「檢索→組 prompt→結構化輸出」組成一條可重用、可單獨呼叫的 `classify_chain` pipeline |
+| 失敗重試 | 個別腳本手寫 `try/except` 與迴圈 | `Runnable.with_retry()` 宣告式設定重試次數與重試條件 |
+| 可組合性 | 換 few-shot 範例、換模型都要改同一支腳本內部邏輯 | chain 的每一步都是獨立 `Runnable`，理論上可單獨替換檢索器、prompt 組裝、LLM，不動其他步驟 |
+| 定位 | 已驗證穩定、正式寫入 Notion 的生產流程 | 平行的實驗／展示模組，示範 chain 編排技術，不寫入 Notion |
+
+### 實測數據（`--compare` 抽樣結果）
+
+用 `--compare` 對既有語料抽樣（共 23 筆，seed 42／1／7 三批）比較動態 chain 與既有標註：
+
+| 指標 | 數值 |
+|------|------|
+| 抽樣筆數 | 23 |
+| 與既有標註完全一致 | 18/23（78%） |
+| 與既有標註至少部分重疊 | 22/23（96%） |
+
+> ⚠️ 這裡的「一致率」衡量的是動態 chain 與既有標註（即 `notion_classify.py` 舊流程的輸出）**答案相不相似**，既有標註本身並非人工驗證過的 ground truth，所以這不是正確率，兩者分類不同時無法判斷哪一個才是對的。若要量化真正的正確性提升，需要另外找一批樣本做人工判讀當 ground truth 再比較。
+
+### 架構
+
+```
+待分類段落
+   │
+   ▼
+RunnableLambda(_retrieve_examples)   ── 呼叫 src/rag/query_engine.search_similar()
+   │                                    過濾「無法判斷」與自我匹配
+   ▼
+RunnableLambda(_build_prompt)        ── 組成 System + 動態 few-shot（Human/AI 訊息對）+ 待分類段落
+   │
+   ▼
+ChatAnthropic(claude-haiku-4-5).with_structured_output(ClassificationResult)
+   │
+   ▼
+ClassificationResult（categories／reason／keywords，型別已驗證）
+```
+
+### 使用方式
+
+```bash
+python -m src.langchain_pipeline.classify_chain --text "段落文字…"        # 單段測試，印出動態 few-shot 範例與分類結果
+python -m src.langchain_pipeline.classify_chain --paper-id P11-199       # 從語料撈一筆段落，並對照原本的分類
+python -m src.langchain_pipeline.classify_chain --compare --sample 10    # 抽樣比較動態 chain 與既有語料的靜態分類，統計一致率
+```
+
+`--compare` 直接拿 `labeled_corpus.jsonl` 裡既有的分類結果（即 `notion_classify.py` 固定 few-shot 版本產出）當基準，不會重新呼叫舊流程，也不會產生額外的分類費用。
+
+> 這是展示用途，不影響正式流程；不會寫入 Notion，也不會修改 `results/`、`labeled_corpus.jsonl`。
+
 ## 目錄結構
 
 ```
@@ -196,7 +263,9 @@ Xinyi_Township_Gazetteer/
     ├── split_and_merge_paragraphs_xlsx.py  # 段落 xlsx 分篇／合併後處理
     ├── data/
     │   └── build_labeled_corpus.py  # 合併段落與分類結果 → labeled_corpus.jsonl（不上傳版控）
-    └── rag/
-        ├── build_index.py           # 建立 LlamaIndex + Chroma 向量索引
-        └── query_engine.py          # 語意檢索／問答助手查詢引擎
+    ├── rag/
+    │   ├── build_index.py           # 建立 LlamaIndex + Chroma 向量索引
+    │   └── query_engine.py          # 語意檢索／問答助手查詢引擎
+    └── langchain_pipeline/
+        └── classify_chain.py        # LangChain LCEL 動態 few-shot 分類 chain
 ```

@@ -53,6 +53,7 @@ class SimilarParagraph:
     page: str
     categories: list[str]
     keywords: list[str]
+    reason: str
     score: float
 
 
@@ -102,6 +103,7 @@ def _node_to_similar_paragraph(node: NodeWithScore) -> SimilarParagraph:
         page=meta.get("page", ""),
         categories=categories.split(",") if categories else [],
         keywords=keywords.split(",") if keywords else [],
+        reason=meta.get("reason", ""),
         score=node.score or 0.0,
     )
 
