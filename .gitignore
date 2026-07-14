@@ -23,3 +23,7 @@ This_plan/*
 batch_states/
 final_file/
 results/
+
+# RAG：語料快取與向量庫（執行產物，可重新產生）
+src/data/labeled_corpus.jsonl
+vectorstore/
