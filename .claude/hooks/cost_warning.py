@@ -12,6 +12,11 @@ PreToolUse hook（Bash / PowerShell）。
   （38,066,941 input tokens、1,817,689 output tokens ÷ 10,099 筆）換算而來，非猜測。
 - classify_chain.py 的單次呼叫成本，是從一次真實呼叫的 usage_metadata
   （3,537 input / 109 output tokens）換算而來。
+- classify_agent.py 的成本區間，是從 3 次真實呼叫的 usage_metadata 換算而來：
+  未呼叫檢索工具時 2 次平均約 2,405 input / 128 output tokens，
+  呼叫 1 次檢索工具時 1 次約 5,480 input / 300 output tokens。
+  agent 會自行決定要不要檢索、檢索幾次（最多 3 次，見 recursion_limit），
+  故單次成本本來就有波動，不是固定值。
 - 定價比照 calc_cost.py 的註解（claude-haiku-4-5：Input $1.00/1M、Output $5.00/1M，
   Batch 皆 5 折）。calc_cost.py 頂層會建立 Anthropic client（需要 ANTHROPIC_API_KEY）
   而無法直接 import，故常數在此重新宣告——日後若調價，兩處都要同步更新。
@@ -35,6 +40,10 @@ NOTION_INPUT_TOKENS_PER_ITEM = 38_066_941 / 10_099
 NOTION_OUTPUT_TOKENS_PER_ITEM = 1_817_689 / 10_099
 CLASSIFY_CHAIN_INPUT_TOKENS = 3_537
 CLASSIFY_CHAIN_OUTPUT_TOKENS = 109
+AGENT_INPUT_TOKENS_NO_RETRIEVAL = 2_405
+AGENT_OUTPUT_TOKENS_NO_RETRIEVAL = 128
+AGENT_INPUT_TOKENS_WITH_RETRIEVAL = 5_480
+AGENT_OUTPUT_TOKENS_WITH_RETRIEVAL = 300
 
 
 def _token_cost(input_tokens: float, output_tokens: float, input_rate: float, output_rate: float) -> float:
@@ -68,6 +77,30 @@ def main() -> None:
         low, high = per_call * n * 0.9, per_call * n * 1.5
         estimate = (
             f"單次呼叫實測約 ${per_call:.4f} USD；本次預估跑 {n} 筆，"
+            f"約 ${low:.4f}~${high:.4f} USD（約 NT${low * 32:.2f}~{high * 32:.2f}）。"
+        )
+
+    elif "classify_agent" in cmd:
+        reason = (
+            "會呼叫 Claude API（claude-haiku-4-5）做 agent 編排分類，模型自行決定要不要"
+            "呼叫檢索工具、呼叫幾次（最多 3 次），並呼叫 Voyage API 做語意檢索。"
+        )
+        if "--compare" in cmd:
+            m = re.search(r"--sample[=\s]+(\d+)", cmd)
+            n = int(m.group(1)) if m else 10  # --compare 的 argparse 預設值
+        else:
+            n = 1  # --text / --paper-id 都只分類一筆
+        low = _token_cost(
+            AGENT_INPUT_TOKENS_NO_RETRIEVAL, AGENT_OUTPUT_TOKENS_NO_RETRIEVAL,
+            INPUT_RATE_REALTIME, OUTPUT_RATE_REALTIME,
+        ) * n
+        high = _token_cost(
+            AGENT_INPUT_TOKENS_WITH_RETRIEVAL, AGENT_OUTPUT_TOKENS_WITH_RETRIEVAL,
+            INPUT_RATE_REALTIME, OUTPUT_RATE_REALTIME,
+        ) * n * 1.3  # 多留一點餘裕：實測樣本裡最多只呼叫過 1 次，但系統提示允許到 3 次
+        estimate = (
+            f"實測：不檢索時約 ${low / n:.4f} USD／筆，檢索 1 次約 ${high / n / 1.3:.4f} USD／筆"
+            f"（agent 自行決定要不要檢索，非固定）；本次預估跑 {n} 筆，"
             f"約 ${low:.4f}~${high:.4f} USD（約 NT${low * 32:.2f}~{high * 32:.2f}）。"
         )
 

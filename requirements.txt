@@ -17,3 +17,5 @@ voyageai>=0.3.0
 # LangChain：動態 few-shot 分類 chain
 langchain-core>=0.3.0
 langchain-anthropic>=0.3.0
+# LangChain Agent：讓模型自行決定是否／如何呼叫檢索工具
+langchain>=1.0.0
