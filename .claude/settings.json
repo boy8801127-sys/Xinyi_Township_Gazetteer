@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/cost_warning.py\"",
+            "timeout": 10,
+            "statusMessage": "檢查是否會呼叫付費 API…"
+          }
+        ]
+      }
+    ]
+  }
+}
