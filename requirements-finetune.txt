@@ -1,0 +1,24 @@
+# 本地 Fine-tuning（Twinkle AI 系列模型，Unsloth QLoRA）
+# 獨立於 requirements.txt：這些是重量級、平台相依（CUDA）的 ML 套件，
+# 只有要在本機 GPU 做 fine-tuning 時才需要安裝，其餘分類/RAG/LangChain 流程不依賴它們。
+#
+# 安裝順序（實測在 RTX 5060 Laptop / Blackwell sm_120 上跑得通）：
+#   1) 先依自己的 GPU 從 https://pytorch.org/get-started/locally/ 選對應 CUDA 版本裝 torch。
+#      RTX 50 系列（Blackwell，sm_120）需要 CUDA 12.8+ 的 wheel，cu124 不含對應核心：
+#        pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   2) 安裝以下套件：
+#        pip install -r requirements-finetune.txt
+#   3) unsloth 的相依解析會把 torch 換成 CPU-only 版本，裝完後務必用 --no-deps 強制裝回原本的
+#      CUDA 版 torch（否則 torch.cuda.is_available() 會變成 False）：
+#        pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128 --force-reinstall --no-deps
+unsloth>=2024.12
+trl>=0.12.0
+peft>=0.14.0
+bitsandbytes>=0.45.0
+transformers>=4.47.0
+accelerate>=1.2.0
+datasets>=3.2.0
+jupyter>=1.1.0
+
+# generate_qa.py：呼叫 Gemini API 生成合成 QA 對（不需要 GPU，但屬於 fine-tuning 流程的一部分）
+langchain-google-genai>=2.0.0

@@ -21,6 +21,12 @@ PreToolUse hook（Bash / PowerShell）。
   Batch 皆 5 折）。calc_cost.py 頂層會建立 Anthropic client（需要 ANTHROPIC_API_KEY）
   而無法直接 import，故常數在此重新宣告——日後若調價，兩處都要同步更新。
 - build_index.py（Voyage embedding）本專案未實測過真實花費，僅為粗估，會明確標註。
+- generate_qa.py 改用 Gemini API（gemini-3.1-flash-lite，即時模式 $0.25/1M input、
+  $1.50/1M output，2026-07 查證）。單價是從全量 --all 實跑（10,099 筆）的真實
+  usage_metadata 換算而來（合計 input 8,106,964 / output 1,608,083 tokens，
+  平均每筆 input≈803 / output≈159 tokens），實際總花費約 $4.44 USD。
+  選型依據：實測比較過 Claude Haiku 4.5／Gemini 3.1 Flash-Lite／Groq Llama 3.3 70B，
+  Gemini 品質與 Claude 相當、成本只要 Claude 的約 1/8，且未觀察到 Groq 出現的編造資訊問題。
 """
 import json
 import re
@@ -35,6 +41,10 @@ OUTPUT_RATE_REALTIME = 5.00
 INPUT_RATE_BATCH = 0.50
 OUTPUT_RATE_BATCH = 2.50
 
+# gemini-3.1-flash-lite 定價（USD / 1M tokens，即時模式，2026-07 查證）
+GEMINI_FLASH_LITE_INPUT_RATE = 0.25
+GEMINI_FLASH_LITE_OUTPUT_RATE = 1.50
+
 # 實測 token 數（見上方 docstring 來源說明）
 NOTION_INPUT_TOKENS_PER_ITEM = 38_066_941 / 10_099
 NOTION_OUTPUT_TOKENS_PER_ITEM = 1_817_689 / 10_099
@@ -44,6 +54,9 @@ AGENT_INPUT_TOKENS_NO_RETRIEVAL = 2_405
 AGENT_OUTPUT_TOKENS_NO_RETRIEVAL = 128
 AGENT_INPUT_TOKENS_WITH_RETRIEVAL = 5_480
 AGENT_OUTPUT_TOKENS_WITH_RETRIEVAL = 300
+# generate_qa.py：全量 --all 實跑（10,099 筆）的真實平均值（見上方 docstring 來源說明）
+QA_GEN_INPUT_TOKENS = 803
+QA_GEN_OUTPUT_TOKENS = 159
 
 
 def _token_cost(input_tokens: float, output_tokens: float, input_rate: float, output_rate: float) -> float:
@@ -102,6 +115,24 @@ def main() -> None:
             f"實測：不檢索時約 ${low / n:.4f} USD／筆，檢索 1 次約 ${high / n / 1.3:.4f} USD／筆"
             f"（agent 自行決定要不要檢索，非固定）；本次預估跑 {n} 筆，"
             f"約 ${low:.4f}~${high:.4f} USD（約 NT${low * 32:.2f}~{high * 32:.2f}）。"
+        )
+
+    elif "generate_qa" in cmd:
+        reason = "會呼叫 Gemini API（gemini-3.1-flash-lite）對段落生成合成 QA 對，供後續 fine-tuning 使用。"
+        m = re.search(r"--sample[=\s]+(\d+)", cmd)
+        if m:
+            n = int(m.group(1))
+        elif "--all" in cmd:
+            n = 10_099  # 語料總筆數，實際依尚未生成過的段落數而定，可能更少
+        else:
+            n = 0
+        per_item = _token_cost(
+            QA_GEN_INPUT_TOKENS, QA_GEN_OUTPUT_TOKENS,
+            GEMINI_FLASH_LITE_INPUT_RATE, GEMINI_FLASH_LITE_OUTPUT_RATE,
+        )
+        estimate = (
+            f"實測平均每筆約 ${per_item:.4f} USD；本次預估最多處理 {n} 筆，"
+            f"約 ${per_item * n:.2f} USD（約 NT${per_item * n * 32:.2f}）。"
         )
 
     elif "notion_classify.py" in cmd:

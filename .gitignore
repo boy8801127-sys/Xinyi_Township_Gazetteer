@@ -27,3 +27,9 @@ results/
 # RAG：語料快取與向量庫（執行產物，可重新產生）
 src/data/labeled_corpus.jsonl
 vectorstore/
+
+# Fine-tuning：訓練/評估資料切分與 LoRA adapter 權重（執行產物，可重新產生）
+src/finetune/data/
+src/finetune/adapters/
+.ipynb_checkpoints/
+unsloth_compiled_cache/
