@@ -28,6 +28,9 @@ results/
 src/data/labeled_corpus.jsonl
 vectorstore/
 
+# RAG 部署（Hugging Face Space）：獨立的 git remote，不進主要 GitHub repo
+deploy/
+
 # Fine-tuning：訓練/評估資料切分與 LoRA adapter 權重（執行產物，可重新產生）
 src/finetune/data/
 src/finetune/adapters/

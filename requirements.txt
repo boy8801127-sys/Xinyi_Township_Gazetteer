@@ -7,11 +7,11 @@ openpyxl>=3.1.0
 anthropic>=0.40.0
 notion-client>=2.2.0
 python-dotenv>=1.0.0
-# RAG：LlamaIndex + Chroma 向量庫 + Voyage embeddings
+# RAG：LlamaIndex + Chroma 向量庫 + Voyage embeddings，Gemini 生成回答
 llama-index-core>=0.11.0
 llama-index-vector-stores-chroma>=0.2.0
 llama-index-embeddings-voyageai>=0.2.0
-llama-index-llms-anthropic>=0.3.0
+llama-index-llms-google-genai>=0.9.0
 chromadb>=0.5.0
 voyageai>=0.3.0
 # LangChain：動態 few-shot 分類 chain
@@ -19,3 +19,4 @@ langchain-core>=0.3.0
 langchain-anthropic>=0.3.0
 # LangChain Agent：讓模型自行決定是否／如何呼叫檢索工具
 langchain>=1.0.0
+langchain-google-genai>=2.0.0

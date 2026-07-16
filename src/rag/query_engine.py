@@ -2,7 +2,7 @@
 """
 查詢已建好的向量索引，提供兩種用途：
     1. search_similar()：純語意檢索，供分類流程做動態 few-shot（見 src/langchain_pipeline/classify_chain.py）
-    2. answer_question()：檢索 + Claude 生成含引用來源的回答（鄉志編纂問答助手）
+    2. answer_question()：檢索 + Gemini 生成含引用來源的回答（鄉志編纂問答助手）
 
 前置作業：
     python -m src.data.build_labeled_corpus
@@ -32,7 +32,7 @@ from llama_index.core.vector_stores import (
     MetadataFilters,
 )
 from llama_index.embeddings.voyageai import VoyageEmbedding
-from llama_index.llms.anthropic import Anthropic
+from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.vector_stores.chroma import ChromaVectorStore
 
 load_dotenv()
@@ -42,7 +42,12 @@ CHROMA_DIR = ROOT / "vectorstore" / "chroma"
 COLLECTION_NAME = "xinyi_paragraphs"
 
 EMBED_MODEL_NAME = "voyage-3"
-DEFAULT_LLM_MODEL = "claude-haiku-4-5"
+DEFAULT_LLM_MODEL = "gemini-3.1-flash-lite"
+# 明確指定，不吃 GoogleGenAI 的預設值（None＝跟模型上限走、max_retries=3）——
+# 分點列出＋多筆引用的回答容易超過幾百字，1024 給足夠空間；retries 拉高到 5 降低單次
+# API 抖動就整段失敗的機率。
+DEFAULT_MAX_TOKENS = 1024
+DEFAULT_MAX_RETRIES = 5
 
 
 @dataclass
@@ -130,9 +135,13 @@ def answer_question(
     k: int = 5,
     model: str = DEFAULT_LLM_MODEL,
 ) -> AnswerWithCitations:
-    """檢索相關段落，交給 Claude 生成附引用來源的回答。"""
+    """檢索相關段落，交給 Gemini 生成附引用來源的回答。"""
     index = _get_index()
-    Settings.llm = Anthropic(model=model)
+    Settings.llm = GoogleGenAI(
+        model=model,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        max_retries=DEFAULT_MAX_RETRIES,
+    )
 
     query_engine = index.as_query_engine(similarity_top_k=k)
     response = query_engine.query(question)
