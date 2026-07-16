@@ -67,6 +67,7 @@ class Citation:
     id: str
     source: str
     page: str
+    paragraph: str
 
 
 @dataclass
@@ -151,6 +152,7 @@ def answer_question(
             id=node.node.id_,
             source=node.node.metadata.get("source", ""),
             page=node.node.metadata.get("page", ""),
+            paragraph=node.node.get_content(),
         )
         for node in response.source_nodes
     ]
@@ -170,6 +172,8 @@ def _print_answer(result: AnswerWithCitations) -> None:
     print("\n引用來源：")
     for c in result.citations:
         print(f"  - {c.id}｜{c.source} 第 {c.page} 頁")
+        preview = c.paragraph[:200].replace("\n", " ")
+        print(f"    {preview}{'...' if len(c.paragraph) > 200 else ''}")
 
 
 def main() -> None:

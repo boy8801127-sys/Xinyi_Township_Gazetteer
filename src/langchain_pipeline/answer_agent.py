@@ -80,7 +80,7 @@ def _make_search_tool(citation_pool: dict[str, Citation]):
         切入角度來擴大涵蓋面。"""
         results = search_similar(query, k=k)
         for r in results:
-            citation_pool[r.id] = Citation(id=r.id, source=r.source, page=r.page)
+            citation_pool[r.id] = Citation(id=r.id, source=r.source, page=r.page, paragraph=r.paragraph)
         return json.dumps(
             [
                 {"id": r.id, "paragraph": r.paragraph[:300], "source": r.source, "page": r.page}
@@ -149,6 +149,8 @@ def _print_answer(answer: str, citations: list[Citation]) -> None:
     print("\n引用來源：")
     for c in citations:
         print(f"  - {c.id}｜{c.source} 第 {c.page} 頁")
+        preview = c.paragraph[:200].replace("\n", " ")
+        print(f"    {preview}{'...' if len(c.paragraph) > 200 else ''}")
 
 
 def compare_with_single_shot(question: str) -> None:
