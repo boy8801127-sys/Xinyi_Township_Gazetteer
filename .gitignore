@@ -36,3 +36,10 @@ src/finetune/data/
 src/finetune/adapters/
 .ipynb_checkpoints/
 unsloth_compiled_cache/
+
+# 南投縣志原始資料（docx＋掃描圖，體積大且為授權書面資料，不上傳）
+books/
+
+# 個人作品集素材（簡報、截圖，非專案程式碼）
+photo/
+ppt/

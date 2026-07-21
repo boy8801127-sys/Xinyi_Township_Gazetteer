@@ -21,6 +21,8 @@ PreToolUse hook（Bash / PowerShell）。
   Batch 皆 5 折）。calc_cost.py 頂層會建立 Anthropic client（需要 ANTHROPIC_API_KEY）
   而無法直接 import，故常數在此重新宣告——日後若調價，兩處都要同步更新。
 - build_index.py（Voyage embedding）本專案未實測過真實花費，僅為粗估，會明確標註。
+- add_to_index.py 是 build_index.py 的增量版（只對還沒被索引過的新段落 embedding，
+  不重新嵌入既有段落），成本估算方式沿用 build_index.py 的粗估，但註明量級較小。
 - generate_qa.py 改用 Gemini API（gemini-3.1-flash-lite，即時模式 $0.25/1M input、
   $1.50/1M output，2026-07 查證）。單價是從全量 --all 實跑（10,099 筆）的真實
   usage_metadata 換算而來（合計 input 8,106,964 / output 1,608,083 tokens，
@@ -158,6 +160,15 @@ def main() -> None:
             "⚠️ 本專案沒有實測過 Voyage 的真實花費，以下為粗估：Voyage 定價通常在每百萬 token "
             "數分錢等級，10,099 筆量級預期在 $1 USD 以下，但未經驗證，且 Voyage 帳單不會出現在 "
             "Anthropic Console，需另外查 Voyage AI 自己的 dashboard。"
+        )
+
+    elif "add_to_index" in cmd:
+        reason = "會呼叫 Voyage AI，只對 labeled_corpus.jsonl 裡還沒被索引過的新段落做 embedding（增量更新，不重新嵌入已存在的段落）。"
+        estimate = (
+            "⚠️ 本專案沒有實測過 Voyage 的真實花費，估算方式同 build_index.py：Voyage 定價通常在"
+            "每百萬 token 數分錢等級，但這裡只處理新增段落，量級遠小於全量重建，預期在 $0.1 USD "
+            "以下，但未經驗證，且 Voyage 帳單不會出現在 Anthropic Console，需另外查 Voyage AI "
+            "自己的 dashboard。"
         )
 
     elif "query_engine" in cmd:
