@@ -172,7 +172,11 @@ def answer_with_agent(
     call_count, queries = _count_search_calls(result["messages"])
 
     structured: AgentAnswer = result["structured_response"]
-    citations = [citation_pool[cid] for cid in structured.cited_ids if cid in citation_pool]
+    # cited_ids 是模型輸出，沒有唯一性保證——同一段落若在不同句子各被引用一次，
+    # 可能重複列出；去重保留首次出現順序，避免下游（app.py 的引用編號／錨點 id）
+    # 因為重複段落出現兩次而錯亂。
+    unique_ids = list(dict.fromkeys(structured.cited_ids))
+    citations = [citation_pool[cid] for cid in unique_ids if cid in citation_pool]
     return structured, citations, call_count, queries
 
 
