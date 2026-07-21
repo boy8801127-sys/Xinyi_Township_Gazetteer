@@ -39,14 +39,33 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field
 
-from src.rag.query_engine import Citation, DEFAULT_LLM_MODEL, answer_question, search_similar
+from src.rag.query_engine import (
+    SCOPE_NANTOU,
+    SCOPE_XINYI,
+    Citation,
+    DEFAULT_LLM_MODEL,
+    answer_question,
+    search_similar,
+)
 
 load_dotenv()
 
 SEARCH_TOOL_NAME = "search_gazetteer_paragraphs"
 MAX_TOOL_CALLS_HINT = 6
 
-AGENT_SYSTEM_PROMPT = f"""你是《南投縣信義鄉志》的問答助理，負責回答關於信義鄉的知識性問題。
+
+def _scope_clause(scope: str | None) -> str:
+    if scope == SCOPE_XINYI:
+        return (
+            "\n\n【地理範圍限定】：這次只回答明確跟信義鄉相關的內容。如果檢索到"
+            "的段落談的是南投縣其他鄉鎮或整個南投縣、沒有明確關聯到信義鄉，不要"
+            "拿來回答（除非問題本身就是問信義鄉以外的範圍）。"
+        )
+    return ""
+
+
+def _build_system_prompt(scope: str | None = None) -> str:
+    return f"""你是《南投縣信義鄉志》的問答助理，負責回答關於信義鄉的知識性問題。
 
 【核心規則，絕對不能違反】：
 你只能根據 {SEARCH_TOOL_NAME} 工具實際檢索到的段落內容作答。如果某個面向沒有被
@@ -61,10 +80,16 @@ AGENT_SYSTEM_PROMPT = f"""你是《南投縣信義鄉志》的問答助理，負
 {MAX_TOOL_CALLS_HINT} 次；如果問題本身很具體、單次檢索就已經找齊需要的資訊，
 不需要硬湊次數。
 
-【回答格式】：
-- answer：完整、分點列出的回答，繁體中文，每一點都要能對應到你檢索過的段落
-- cited_ids：實際引用來當作答案依據的段落 id 清單（id 是 {SEARCH_TOOL_NAME}
-  回傳結果裡的 "id" 欄位，只列真的用到的，不要照抄全部檢索結果）"""
+【回答格式，準確標註來源是重點】：
+- answer：完整、分點列出的回答，繁體中文。每次引用某個檢索到的段落時，緊接在
+  對應句子後面用中括號標註該段落的 id（例如「信義鄉在日治時期設有蕃童教育所
+  [B17-021]」），id 必須跟 {SEARCH_TOOL_NAME} 回傳結果裡的 "id" 欄位完全一致，
+  一字不差——這個標記會被轉成可點擊的連結，id 錯誤會導致連結失效。沒有實際引用
+  依據的句子不要加標記。**一句話同時引用多個段落時，每個 id 要各自用一對中括號
+  分開寫**，例如「原住民以布農族為主 [P55-185][P11-80]」，不要寫成
+  「[P55-185, P11-80]」（逗號寫在同一個中括號裡無法個別轉成連結）。
+- cited_ids：實際引用來當作答案依據的段落 id 清單，必須跟 answer 裡標註的 id
+  完全一致（同一組 id、不多不少），只列真的用到的，不要照抄全部檢索結果{_scope_clause(scope)}"""
 
 
 class AgentAnswer(BaseModel):
@@ -72,15 +97,17 @@ class AgentAnswer(BaseModel):
     cited_ids: list[str] = Field(description="實際引用的段落 id 清單")
 
 
-def _make_search_tool(citation_pool: dict[str, Citation]):
+def _make_search_tool(citation_pool: dict[str, Citation], source_type: str | None = None):
     @tool(SEARCH_TOOL_NAME)
     def search_gazetteer_paragraphs(query: str, k: int = 5) -> str:
         """檢索跟信義鄉志相關、語意最相近的段落，回傳 JSON 陣列（含 id/paragraph/source/page）。
         query 可以自行改寫成更精準的關鍵字，不必用原問題全文；可重複呼叫、每次換個
         切入角度來擴大涵蓋面。"""
-        results = search_similar(query, k=k)
+        results = search_similar(query, k=k, source_type=source_type)
         for r in results:
-            citation_pool[r.id] = Citation(id=r.id, source=r.source, page=r.page, paragraph=r.paragraph)
+            citation_pool[r.id] = Citation(
+                id=r.id, source=r.source, page=r.page, paragraph=r.paragraph, score=r.score
+            )
         return json.dumps(
             [
                 {"id": r.id, "paragraph": r.paragraph[:300], "source": r.source, "page": r.page}
@@ -103,8 +130,13 @@ def _count_search_calls(messages: list) -> tuple[int, list[str]]:
     return len(queries), queries
 
 
-def answer_with_agent(question: str) -> tuple[AgentAnswer, list[Citation], int, list[str]]:
+def answer_with_agent(
+    question: str, source_type: str | None = None, scope: str | None = None
+) -> tuple[AgentAnswer, list[Citation], int, list[str]]:
     """執行 agent 編排問答，回傳結構化答案、引用來源、實際呼叫檢索工具次數與查詢字句。
+    source_type：限定這次對話全程只從「論文」或「書籍」來源檢索，None 表示不限——
+    這是整次對話固定的搜尋範圍（由呼叫端／UI 決定），不是讓 agent 自己每次呼叫時判斷。
+    scope：SCOPE_XINYI 限定只用明確跟信義鄉相關的段落作答，None／SCOPE_NANTOU 不限。
 
     可能拋出 langgraph.errors.GraphRecursionError（agent 在 recursion_limit 步數內
     沒能收斂出結構化回答時）——呼叫端（CLI）負責接住並印出友善訊息。"""
@@ -112,8 +144,8 @@ def answer_with_agent(question: str) -> tuple[AgentAnswer, list[Citation], int, 
     llm = ChatGoogleGenerativeAI(model=DEFAULT_LLM_MODEL)
     agent = create_agent(
         model=llm,
-        tools=[_make_search_tool(citation_pool)],
-        system_prompt=AGENT_SYSTEM_PROMPT,
+        tools=[_make_search_tool(citation_pool, source_type=source_type)],
+        system_prompt=_build_system_prompt(scope),
         response_format=AgentAnswer,
         middleware=[
             # 真正對 search_gazetteer_paragraphs 這個工具本身設次數上限（跟系統提示
@@ -148,19 +180,19 @@ def _print_answer(answer: str, citations: list[Citation]) -> None:
     print(answer)
     print("\n引用來源：")
     for c in citations:
-        print(f"  - {c.id}｜{c.source} 第 {c.page} 頁")
+        print(f"  - {c.id}｜{c.source} 第 {c.page} 頁（相關度 {c.score:.0%}）")
         preview = c.paragraph[:200].replace("\n", " ")
         print(f"    {preview}{'...' if len(c.paragraph) > 200 else ''}")
 
 
-def compare_with_single_shot(question: str) -> None:
+def compare_with_single_shot(question: str, source_type: str | None = None, scope: str | None = None) -> None:
     print("=" * 20, "單次版 answer_question()（query_engine.py）", "=" * 20)
-    single = answer_question(question)
+    single = answer_question(question, source_type=source_type, scope=scope)
     _print_answer(single.answer, single.citations)
     print(f"\n引用段落數：{len(single.citations)}")
 
     print("\n" + "=" * 20, "Agentic 版 answer_with_agent()", "=" * 20)
-    structured, citations, call_count, queries = answer_with_agent(question)
+    structured, citations, call_count, queries = answer_with_agent(question, source_type=source_type, scope=scope)
     print(f"呼叫檢索工具 {call_count} 次：{queries}")
     _print_answer(structured.answer, citations)
     print(f"\n引用段落數：{len(citations)}")
@@ -170,6 +202,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Agentic RAG 問答（讓模型自主決定要不要／如何多次檢索）")
     parser.add_argument("--ask", metavar="QUESTION", help="向鄉志問答助手提問")
     parser.add_argument("--compare", action="store_true", help="同一題並列比較單次版與 agent 版")
+    parser.add_argument(
+        "--source-type", default=None, choices=["論文", "書籍"],
+        help="限定資料來源（論文／書籍），預設不限",
+    )
+    parser.add_argument(
+        "--scope", default=None, choices=[SCOPE_XINYI, SCOPE_NANTOU],
+        help="地理範圍，預設不限",
+    )
     args = parser.parse_args()
 
     if not args.ask:
@@ -177,10 +217,12 @@ def main() -> None:
         return
 
     if args.compare:
-        compare_with_single_shot(args.ask)
+        compare_with_single_shot(args.ask, source_type=args.source_type, scope=args.scope)
         return
 
-    structured, citations, call_count, queries = answer_with_agent(args.ask)
+    structured, citations, call_count, queries = answer_with_agent(
+        args.ask, source_type=args.source_type, scope=args.scope
+    )
     print(f"呼叫檢索工具 {call_count} 次：{queries}\n")
     _print_answer(structured.answer, citations)
 

@@ -12,10 +12,21 @@ CLI 使用方式：
     python -m src.rag.query_engine --ask "日治時期信義鄉發生哪些重要史事？"
     python -m src.rag.query_engine --search "布農族祭典" --k 5
     python -m src.rag.query_engine --search "部落產業" --category 經濟篇
+    python -m src.rag.query_engine --ask "信義鄉的氣候概況" --source-type 書籍
+    python -m src.rag.query_engine --ask "南投縣的氣候概況" --scope 整個南投縣
+
+answer_question() 用 LlamaIndex 的 CitationQueryEngine（而非普通 as_query_engine()）：
+它會把檢索到的段落再切成帶編號的「Source N」小塊塞進 prompt，要求 Gemini 在答案裡
+用 [N] 標註引用哪一塊，UI 端可以把 [N] 轉成超連結、點擊跳到對應的引用來源——這是
+準確、逐句可追溯來源的關鍵，跟純 as_query_engine() 「答案文字完全不含引用位置資訊」
+不同。citation_chunk_size 設 1024（預設 512）是因為語料庫段落平均長度落在
+300~800 字之間，太小的預設值會把一段話硬切成兩三個引用編號，1024 讓大多數段落
+維持成單一引用。
 """
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,7 +36,8 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 
 import chromadb
 from dotenv import load_dotenv
-from llama_index.core import Settings, VectorStoreIndex
+from llama_index.core import PromptTemplate, Settings, VectorStoreIndex
+from llama_index.core.query_engine import CitationQueryEngine
 from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores import (
     ExactMatchFilter,
@@ -36,6 +48,11 @@ from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.vector_stores.chroma import ChromaVectorStore
 
 load_dotenv()
+
+# 地理範圍篩選的兩個合法值（UI 的 Radio 選項、answer_agent.py 都共用這組字面值，
+# 避免各處各寫一份字串、日後改字容易漏改）。
+SCOPE_XINYI = "僅信義鄉"
+SCOPE_NANTOU = "整個南投縣"
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 CHROMA_DIR = ROOT / "vectorstore" / "chroma"
@@ -68,6 +85,7 @@ class Citation:
     source: str
     page: str
     paragraph: str
+    score: float = 0.0
 
 
 @dataclass
@@ -114,29 +132,95 @@ def _node_to_similar_paragraph(node: NodeWithScore) -> SimilarParagraph:
     )
 
 
+def _build_filters(category: str | None, source_type: str | None) -> MetadataFilters | None:
+    """依分類／資料來源類型（論文／書籍）組出 metadata 篩選條件，兩者皆為 AND 關係。
+    source_type 對應 build_index.py::_to_node() 依 id 前綴（B=書籍／P=論文）寫入的欄位。"""
+    conditions = []
+    if category:
+        conditions.append(ExactMatchFilter(key="category_primary", value=category))
+    if source_type:
+        conditions.append(ExactMatchFilter(key="source_type", value=source_type))
+    return MetadataFilters(filters=conditions) if conditions else None
+
+
 def search_similar(
     paragraph: str,
     k: int = 3,
     category: str | None = None,
+    source_type: str | None = None,
 ) -> list[SimilarParagraph]:
     """純語意檢索，回傳最相近的已分類段落（供動態 few-shot 使用）。"""
     index = _get_index()
-    filters = None
-    if category:
-        filters = MetadataFilters(
-            filters=[ExactMatchFilter(key="category_primary", value=category)]
-        )
+    filters = _build_filters(category, source_type)
     retriever = index.as_retriever(similarity_top_k=k, filters=filters)
     nodes = retriever.retrieve(paragraph)
     return [_node_to_similar_paragraph(n) for n in nodes]
+
+
+# CitationQueryEngine 內部把每個引用片段的文字直接改寫成 "Source N:\n{原文}\n"
+# （寫死在 llama_index 原始碼裡、不能用參數關掉），顯示給使用者看之前要把這個
+# 內部標記去掉，不然引用來源的段落預覽會多出一行「Source 3:」。
+_CITATION_PREFIX_RE = re.compile(r"^Source \d+:\s*\n")
+
+
+def _strip_citation_prefix(text: str) -> str:
+    return _CITATION_PREFIX_RE.sub("", text)
+
+
+# 模板的少樣本範例裡示範了「回答：」這個標籤，Gemini 有時候會把它當成輸出格式的
+# 一部分照抄一份到真正的答案開頭（例如「回答：信義鄉群山環繞...」），這裡把它
+# 去掉，避免使用者在 UI 上看到多餘的「回答：」字樣。
+_ANSWER_PREFIX_RE = re.compile(r"^\s*(回答|答案)[：:]\s*")
+
+
+def _strip_answer_prefix(text: str) -> str:
+    return _ANSWER_PREFIX_RE.sub("", text)
+
+
+def _scope_clause(scope: str | None) -> str:
+    if scope == SCOPE_XINYI:
+        return (
+            "\n如果某個資料來源談的是南投縣其他鄉鎮或整個南投縣、沒有明確關聯到"
+            "信義鄉的內容，不要引用它來回答（除非問題本身就是問信義鄉以外的範圍）。"
+        )
+    return ""
+
+
+def _citation_qa_template(scope: str | None) -> PromptTemplate:
+    """CitationQueryEngine 的問答 prompt：翻成繁體中文，並依 scope 動態插入地理
+    範圍限定句。範例裡刻意寫 "Source 1:" 英文（而非中文「來源 1」）是因為
+    CitationQueryEngine 組 context_str 時真的就是塞這個英文格式，範例跟實際
+    看到的格式一致，Gemini 比較不會混淆。"""
+    template_str = (
+        "請只根據下方提供的資料來源回答問題，不要使用你原本就知道的知識。"
+        "引用資料來源時，在對應句子後面加上該來源的編號，例如：\n"
+        "Source 1:\n信義鄉在日治時期設有蕃童教育所。\n"
+        "Source 2:\n新高郡下轄六個街庄，信義鄉屬其中之一。\n"
+        "問題：信義鄉在日治時期的行政與教育概況？\n"
+        "答案：信義鄉在日治時期設有蕃童教育所 [1]，行政上隸屬新高郡管轄 [2]。\n"
+        "（中括號裡只寫數字本身，例如 [1]，不要寫成 [Source 1]；不要在答案開頭"
+        "重複「答案：」這個字。）\n"
+        f"{_scope_clause(scope)}\n"
+        "以下是這次問題可用的資料來源：\n"
+        "------\n"
+        "{context_str}\n"
+        "------\n"
+        "問題：{query_str}\n"
+        "回答："
+    )
+    return PromptTemplate(template_str)
 
 
 def answer_question(
     question: str,
     k: int = 5,
     model: str = DEFAULT_LLM_MODEL,
+    source_type: str | None = None,
+    scope: str | None = None,
 ) -> AnswerWithCitations:
-    """檢索相關段落，交給 Gemini 生成附引用來源的回答。"""
+    """檢索相關段落，交給 Gemini 生成逐句標註引用編號（[1][2]…）的回答。
+    source_type：限定只從「論文」或「書籍」來源檢索，None 表示不限。
+    scope：SCOPE_XINYI 限定只用明確跟信義鄉相關的段落作答，None／SCOPE_NANTOU 不限。"""
     index = _get_index()
     Settings.llm = GoogleGenAI(
         model=model,
@@ -144,7 +228,14 @@ def answer_question(
         max_retries=DEFAULT_MAX_RETRIES,
     )
 
-    query_engine = index.as_query_engine(similarity_top_k=k)
+    filters = _build_filters(None, source_type)
+    retriever = index.as_retriever(similarity_top_k=k, filters=filters)
+    query_engine = CitationQueryEngine.from_args(
+        index,
+        retriever=retriever,
+        citation_qa_template=_citation_qa_template(scope),
+        citation_chunk_size=1024,
+    )
     response = query_engine.query(question)
 
     citations = [
@@ -152,11 +243,12 @@ def answer_question(
             id=node.node.id_,
             source=node.node.metadata.get("source", ""),
             page=node.node.metadata.get("page", ""),
-            paragraph=node.node.get_content(),
+            paragraph=_strip_citation_prefix(node.node.get_content()),
+            score=node.score or 0.0,
         )
         for node in response.source_nodes
     ]
-    return AnswerWithCitations(answer=str(response), citations=citations)
+    return AnswerWithCitations(answer=_strip_answer_prefix(str(response)), citations=citations)
 
 
 def _print_search_results(results: list[SimilarParagraph]) -> None:
@@ -171,7 +263,7 @@ def _print_answer(result: AnswerWithCitations) -> None:
     print(result.answer)
     print("\n引用來源：")
     for c in result.citations:
-        print(f"  - {c.id}｜{c.source} 第 {c.page} 頁")
+        print(f"  - {c.id}｜{c.source} 第 {c.page} 頁（相關度 {c.score:.0%}）")
         preview = c.paragraph[:200].replace("\n", " ")
         print(f"    {preview}{'...' if len(c.paragraph) > 200 else ''}")
 
@@ -182,13 +274,21 @@ def main() -> None:
     parser.add_argument("--search", metavar="TEXT", help="純語意檢索相似段落")
     parser.add_argument("--k", type=int, default=5, help="檢索筆數（預設 5）")
     parser.add_argument("--category", default=None, help="限定分類（僅 --search 支援）")
+    parser.add_argument(
+        "--source-type", default=None, choices=["論文", "書籍"],
+        help="限定資料來源（論文／書籍），預設不限",
+    )
+    parser.add_argument(
+        "--scope", default=None, choices=[SCOPE_XINYI, SCOPE_NANTOU],
+        help="地理範圍（僅 --ask 支援），預設不限",
+    )
     args = parser.parse_args()
 
     if args.ask:
-        result = answer_question(args.ask, k=args.k)
+        result = answer_question(args.ask, k=args.k, source_type=args.source_type, scope=args.scope)
         _print_answer(result)
     elif args.search:
-        results = search_similar(args.search, k=args.k, category=args.category)
+        results = search_similar(args.search, k=args.k, category=args.category, source_type=args.source_type)
         _print_search_results(results)
     else:
         parser.print_help()

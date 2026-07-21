@@ -51,6 +51,9 @@ def _load_corpus() -> list[dict]:
 def _to_node(entry: dict) -> TextNode:
     categories = entry.get("categories", [])
     keywords = entry.get("keywords", [])
+    # id 前綴代表資料來源類型（見 src/data/extract_books.py／export_paragraphs.py 的編號規則）：
+    # B 開頭＝《南投縣志》等書籍內容，其餘（P 開頭）＝碩博士論文，供 UI／CLI 依來源篩選用。
+    source_type = "書籍" if entry["id"].startswith("B") else "論文"
     return TextNode(
         id_=entry["id"],
         text=entry["paragraph"],
@@ -61,6 +64,7 @@ def _to_node(entry: dict) -> TextNode:
             "categories": ",".join(categories),
             "keywords": ",".join(keywords),
             "reason": entry.get("reason", ""),
+            "source_type": source_type,
         },
     )
 
