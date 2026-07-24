@@ -28,6 +28,12 @@ results/
 src/data/labeled_corpus.jsonl
 vectorstore/
 
+# 從 docx/PDF 抽出的圖片（執行產物，可重新產生；篩選結果記錄在 output/images_review.csv）
+images/
+
+# Tesseract 繁體中文語言檔（review_tool.py 的 OCR 文字圖層用，體積大且可重新下載）
+.tessdata/
+
 # RAG 部署（Hugging Face Space）：獨立的 git remote，不進主要 GitHub repo
 deploy/
 

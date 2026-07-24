@@ -85,7 +85,7 @@ paper/*.pdf
 
 不同模組刻意用不同 LLM 供應商，都是**實測比較後**的決定，不要不查證就假設全部統一：
 - `notion_classify.py`／`classify_chain.py`／`classify_agent.py`：Claude（`claude-haiku-4-5`）
-- `src/rag/query_engine.py` 的 `answer_question()`／`answer_agent.py`：改用 Gemini（`gemini-3.1-flash-lite`，成本考量，公開展示網站也用這個模型控管費用）
+- `src/rag/query_engine.py` 的 `answer_question()`／`answer_agent.py`：改用 Gemini flash-lite 級距（`DEFAULT_LLM_MODEL = "gemini-flash-lite-latest"`，Google 官方別名，自動跟隨最新一代 flash-lite 模型，不寫死版本號），成本考量，公開展示網站也用這個模型控管費用。2026-07 實測比較過 `gemini-3.1-flash-lite`／`gemini-3.5-flash-lite`／`gemini-3.5-flash`，3.5-flash-lite 回答品質明顯較好、定價只小漲，3.5-flash（非 lite）貴 6 倍且容易撞 `MAX_TOKENS` 上限，不採用（細節見 `src/rag/query_engine.py` 裡 `DEFAULT_LLM_MODEL` 上方註解）
 - `src/finetune/generate_qa.py`：Gemini（實測比較過 Claude／Gemini／Groq，Gemini 品質相當且成本約 1/8，Groq 有觀察到編造事實的幻覺問題）
 - fine-tuning 基底模型只用 `twinkle-ai/gemma-3-4B-T1-it`（原本也測過 Llama 版本，但 chat template 格式風險較高而放棄，見 README「本地 Fine-tuning」章節）
 

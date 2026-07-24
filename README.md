@@ -166,7 +166,7 @@ results/*.json（Claude 分類結果）─┘                                   
 - **建索引**（`src/rag/build_index.py`）：每筆段落轉成 LlamaIndex 的 `TextNode`，metadata 帶來源論文、頁碼、分類、關鍵字；用 Voyage AI 的 `voyage-3` 模型做 embedding（支援繁體中文），寫入本機持久化的 Chroma 向量庫。
 - **查詢引擎**（`src/rag/query_engine.py`）：
   - `search_similar(paragraph, k, category=None)`：純語意檢索，可用 `category_primary` metadata 過濾分類，用途是之後串進分類流程做「動態 few-shot」（取代目前寫死在 prompt 裡的固定範例）
-  - `answer_question(question, k)`：檢索＋用 Gemini（`gemini-3.1-flash-lite`）生成有依據的回答，並回傳引用的來源清單（論文＋頁碼），降低憑空捏造答案的風險
+  - `answer_question(question, k)`：檢索＋用 Gemini（`gemini-flash-lite-latest`，Google 官方別名，自動跟隨最新一代 flash-lite 模型）生成有依據的回答，並回傳引用的來源清單（論文＋頁碼），降低憑空捏造答案的風險。模型選型實測比較過 `gemini-3.1-flash-lite`／`gemini-3.5-flash-lite`／`gemini-3.5-flash`：3.5-flash-lite 回答明顯更完整、延遲持平，定價只小漲一點；3.5-flash（非 lite）貴 6 倍且較長的回答容易撞到 `MAX_TOKENS` 上限失敗，不採用。
 
 ### 使用方式
 

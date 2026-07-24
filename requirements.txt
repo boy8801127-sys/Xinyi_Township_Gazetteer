@@ -20,3 +20,6 @@ langchain-anthropic>=0.3.0
 # LangChain Agent：讓模型自行決定是否／如何呼叫檢索工具
 langchain>=1.0.0
 langchain-google-genai>=2.0.0
+# 圖片審閱小工具（src/data/review_tool.py）的文字圖層 OCR，純本機運算，
+# 另需系統安裝 Tesseract 引擎：winget install --id UB-Mannheim.TesseractOCR
+pytesseract>=0.3.10

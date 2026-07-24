@@ -91,6 +91,7 @@ def build_corpus() -> None:
                 "categories": rec["categories"],
                 "reason": rec.get("reason", ""),
                 "keywords": rec.get("keywords", []),
+                "images": rec.get("images", []),
             }
             out.write(json.dumps(entry, ensure_ascii=False) + "\n")
             kept += 1

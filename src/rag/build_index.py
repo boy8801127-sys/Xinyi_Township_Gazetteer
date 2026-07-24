@@ -51,6 +51,7 @@ def _load_corpus() -> list[dict]:
 def _to_node(entry: dict) -> TextNode:
     categories = entry.get("categories", [])
     keywords = entry.get("keywords", [])
+    images = entry.get("images", [])
     # id 前綴代表資料來源類型（見 src/data/extract_books.py／export_paragraphs.py 的編號規則）：
     # B 開頭＝《南投縣志》等書籍內容，其餘（P 開頭）＝碩博士論文，供 UI／CLI 依來源篩選用。
     source_type = "書籍" if entry["id"].startswith("B") else "論文"
@@ -65,6 +66,12 @@ def _to_node(entry: dict) -> TextNode:
             "keywords": ",".join(keywords),
             "reason": entry.get("reason", ""),
             "source_type": source_type,
+            "images": ",".join(images),
+            # 獨立於 categories/source_type 之外，讓 query_engine.search_images() 能用
+            # ExactMatchFilter 篩出「有圖」的段落，不用對逗號接字串做子字串比對。
+            # 存字串而不是 Python bool——llama_index 的 MetadataFilter.value 型別只接受
+            # str/int/float/list，不接受 bool（實測過，傳 True 會被 pydantic 直接拒絕）。
+            "has_image": "true" if images else "false",
         },
     )
 

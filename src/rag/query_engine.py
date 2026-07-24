@@ -59,11 +59,25 @@ CHROMA_DIR = ROOT / "vectorstore" / "chroma"
 COLLECTION_NAME = "xinyi_paragraphs"
 
 EMBED_MODEL_NAME = "voyage-3"
-DEFAULT_LLM_MODEL = "gemini-3.1-flash-lite"
+# "gemini-flash-lite-latest" 是 Google 官方提供、永遠指向當前最新一代 flash-lite
+# 模型的別名（實測用 client.models.list() 確認存在且可正常呼叫），刻意不寫死版本號
+# ——這一階的模型選型本來就會隨 Google 換代持續重新比較，用別名讓它自動跟最新版
+# 同步，不用每次都改程式碼。
+#
+# 選型依據（2026-07 實測，4 題涵蓋具體事實／比較／已知檢索缺口／綜合性問題，各
+# 用 gemini-3.1-flash-lite／gemini-3.5-flash-lite／gemini-3.5-flash 各答一次）：
+# 3.5-flash-lite 的回答明顯更完整（例如「原住民族群分布與遷徙歷史」一題，3.1 版
+# 只有 496 字，3.5-flash-lite 給了 1155 字，多補了鄉治沿革與跨年份人口統計交叉
+# 比對），延遲持平或更快；定價只小幅上漲（input $0.25→$0.30、output $1.50→$2.50，
+# 每百萬 token，2026-07 查證 Google 官方定價頁）。3.5-flash（非 lite）則不採用：
+# 定價貴 6 倍，且 4 題裡有 2 題直接因為 MAX_TOKENS 被截斷失敗，得再拉高
+# DEFAULT_MAX_TOKENS 才能用，划不來。
+DEFAULT_LLM_MODEL = "gemini-flash-lite-latest"
 # 明確指定，不吃 GoogleGenAI 的預設值（None＝跟模型上限走、max_retries=3）——
-# 分點列出＋多筆引用的回答容易超過幾百字，1024 給足夠空間；retries 拉高到 5 降低單次
-# API 抖動就整段失敗的機率。
-DEFAULT_MAX_TOKENS = 1024
+# prompt 改成要求盡量寫進具體細節（面向教授／專業受眾）後，回答篇幅會比原本的
+# 簡短摘要長不少，1024 容易被截斷，拉高到 2048 給足夠空間；retries 拉高到 5
+# 降低單次 API 抖動就整段失敗的機率。
+DEFAULT_MAX_TOKENS = 2048
 DEFAULT_MAX_RETRIES = 5
 
 
@@ -77,6 +91,7 @@ class SimilarParagraph:
     keywords: list[str]
     reason: str
     score: float
+    images: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -86,12 +101,16 @@ class Citation:
     page: str
     paragraph: str
     score: float = 0.0
+    images: list[str] = field(default_factory=list)
 
 
 @dataclass
 class AnswerWithCitations:
     answer: str
     citations: list[Citation] = field(default_factory=list)
+    # 跟 citations 分開的獨立圖片清單（來自 search_images()，不佔用 citations 的
+    # 檢索名額），供 UI 做成一直顯示、不用點開來源才看得到的圖片區塊。
+    images: list[SimilarParagraph] = field(default_factory=list)
 
 
 _index: VectorStoreIndex | None = None
@@ -120,6 +139,7 @@ def _node_to_similar_paragraph(node: NodeWithScore) -> SimilarParagraph:
     meta = node.node.metadata
     categories = meta.get("categories", "")
     keywords = meta.get("keywords", "")
+    images = meta.get("images", "")
     return SimilarParagraph(
         id=node.node.id_,
         paragraph=node.node.get_content(),
@@ -129,6 +149,7 @@ def _node_to_similar_paragraph(node: NodeWithScore) -> SimilarParagraph:
         keywords=keywords.split(",") if keywords else [],
         reason=meta.get("reason", ""),
         score=node.score or 0.0,
+        images=images.split(",") if images else [],
     )
 
 
@@ -154,6 +175,33 @@ def search_similar(
     filters = _build_filters(category, source_type)
     retriever = index.as_retriever(similarity_top_k=k, filters=filters)
     nodes = retriever.retrieve(paragraph)
+    return [_node_to_similar_paragraph(n) for n in nodes]
+
+
+DEFAULT_IMAGE_K = 4
+
+
+def search_images(
+    query: str,
+    k: int = DEFAULT_IMAGE_K,
+    category: str | None = None,
+    source_type: str | None = None,
+) -> list[SimilarParagraph]:
+    """跟 search_similar() 完全獨立的另一次檢索，只在「有附圖」（has_image=True，
+    build_index.py::_to_node() 寫入的欄位）的段落裡找最相關的幾筆。
+
+    圖片段落的文字往往只是表格儲存格擷取出來的幾個字（例如「南投縣信義鄉七星湖」），
+    語意向量訊號很弱，如果跟一般段落混在同一個 k 名額裡用相似度排序，幾乎搶不贏
+    內容完整的段落、很少真的被檢索到。獨立跑一次「只在有圖的段落裡找」，圖片才會
+    穩定有機會被顯示出來，也不會佔用一般文字引用的 k 名額。"""
+    index = _get_index()
+    conditions = [ExactMatchFilter(key="has_image", value="true")]
+    if category:
+        conditions.append(ExactMatchFilter(key="category_primary", value=category))
+    if source_type:
+        conditions.append(ExactMatchFilter(key="source_type", value=source_type))
+    retriever = index.as_retriever(similarity_top_k=k, filters=MetadataFilters(filters=conditions))
+    nodes = retriever.retrieve(query)
     return [_node_to_similar_paragraph(n) for n in nodes]
 
 
@@ -190,16 +238,27 @@ def _citation_qa_template(scope: str | None) -> PromptTemplate:
     """CitationQueryEngine 的問答 prompt：翻成繁體中文，並依 scope 動態插入地理
     範圍限定句。範例裡刻意寫 "Source 1:" 英文（而非中文「來源 1」）是因為
     CitationQueryEngine 組 context_str 時真的就是塞這個英文格式，範例跟實際
-    看到的格式一致，Gemini 比較不會混淆。"""
+    看到的格式一致，Gemini 比較不會混淆。
+
+    使用者是教授／專業研究者，範例特意示範「把來源裡的具體細節——年代、人名、
+    制度名稱——都寫進答案」，而不是只挑重點簡短帶過，引導模型往更詳細精確的
+    方向回答，而不只是換句話說一遍。"""
     template_str = (
-        "請只根據下方提供的資料來源回答問題，不要使用你原本就知道的知識。"
+        "你是為學術研究者與專業人士服務的方志問答助理，回答對象具備相關領域背景，"
+        "不需要簡化用詞或省略細節。請只根據下方提供的資料來源回答問題，不要使用"
+        "你原本就知道的知識；回答時盡量把來源裡出現的具體事實都寫進去（例如確切"
+        "年代、人名、地名、統計數據、制度或機構名稱），不要只挑重點簡短帶過或用"
+        "籠統字眼概括。如果不同來源之間的說法有出入、或資料只涵蓋問題的部分面向，"
+        "請如實指出這些落差與限制，不要為了讓答案看起來完整而抹平細節。\n"
         "引用資料來源時，在對應句子後面加上該來源的編號，例如：\n"
-        "Source 1:\n信義鄉在日治時期設有蕃童教育所。\n"
-        "Source 2:\n新高郡下轄六個街庄，信義鄉屬其中之一。\n"
+        "Source 1:\n信義鄉在日治時期設有蕃童教育所，昭和8年（1933年）設立於望鄉部落。\n"
+        "Source 2:\n新高郡下轄六個街庄，信義鄉（當時稱久美庄）屬其中之一。\n"
         "問題：信義鄉在日治時期的行政與教育概況？\n"
-        "答案：信義鄉在日治時期設有蕃童教育所 [1]，行政上隸屬新高郡管轄 [2]。\n"
+        "答案：信義鄉在日治時期設有蕃童教育所，昭和8年（1933年）設立於望鄉部落 [1]；"
+        "行政上隸屬新高郡管轄，當時稱為久美庄，屬新高郡下轄六個街庄之一 [2]。\n"
         "（中括號裡只寫數字本身，例如 [1]，不要寫成 [Source 1]；不要在答案開頭"
-        "重複「答案：」這個字。）\n"
+        "重複「答案：」這個字；上面範例只是示範引用格式，實際回答時要盡量把來源"
+        "裡出現的具體細節都寫進去。）\n"
         f"{_scope_clause(scope)}\n"
         "以下是這次問題可用的資料來源：\n"
         "------\n"
@@ -238,17 +297,25 @@ def answer_question(
     )
     response = query_engine.query(question)
 
-    citations = [
-        Citation(
+    citations = []
+    for node in response.source_nodes:
+        images = node.node.metadata.get("images", "")
+        citations.append(Citation(
             id=node.node.id_,
             source=node.node.metadata.get("source", ""),
             page=node.node.metadata.get("page", ""),
             paragraph=_strip_citation_prefix(node.node.get_content()),
             score=node.score or 0.0,
-        )
-        for node in response.source_nodes
-    ]
-    return AnswerWithCitations(answer=_strip_answer_prefix(str(response)), citations=citations)
+            images=images.split(",") if images else [],
+        ))
+
+    # 圖片走獨立檢索（見 search_images() 說明），不佔用上面 k 個文字引用的名額，
+    # 也不影響回答本身的生成（Gemini 完全不知道這批圖片的存在）。
+    images = search_images(question, source_type=source_type)
+
+    return AnswerWithCitations(
+        answer=_strip_answer_prefix(str(response)), citations=citations, images=images
+    )
 
 
 def _print_search_results(results: list[SimilarParagraph]) -> None:
@@ -266,6 +333,10 @@ def _print_answer(result: AnswerWithCitations) -> None:
         print(f"  - {c.id}｜{c.source} 第 {c.page} 頁（相關度 {c.score:.0%}）")
         preview = c.paragraph[:200].replace("\n", " ")
         print(f"    {preview}{'...' if len(c.paragraph) > 200 else ''}")
+    if result.images:
+        print("\n相關圖片：")
+        for r in result.images:
+            print(f"  - {r.id}｜{r.source} 第 {r.page} 頁 → {', '.join(r.images)}")
 
 
 def main() -> None:

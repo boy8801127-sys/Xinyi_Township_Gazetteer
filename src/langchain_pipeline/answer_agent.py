@@ -44,7 +44,9 @@ from src.rag.query_engine import (
     SCOPE_XINYI,
     Citation,
     DEFAULT_LLM_MODEL,
+    SimilarParagraph,
     answer_question,
+    search_images,
     search_similar,
 )
 
@@ -52,6 +54,14 @@ load_dotenv()
 
 SEARCH_TOOL_NAME = "search_gazetteer_paragraphs"
 MAX_TOOL_CALLS_HINT = 6
+# LangGraph 的 recursion_limit 算的是「圖的步數」，不是「呼叫檢索工具的次數」：
+# 每一輪「模型決定呼叫工具」→「工具執行」通常就吃掉 2 步，6 次檢索光是這樣就
+# ≈12~14 步，加上最後整理成 AgentAnswer、以及 ToolCallLimitMiddleware 擋下超額
+# 呼叫時模型可能還要再摸索一兩輪才會收手，原本的 20 步對「真的用滿 6 次檢索」的
+# 廣泛性問題幾乎注定不夠、很容易觸發 GraphRecursionError。40 給足夠餘裕，且
+# ToolCallLimitMiddleware 本身已經把實際檢索次數硬性鎖在 MAX_TOOL_CALLS_HINT，
+# 調高這個值不會讓 agent 多檢索、也不會因此變貴，只是不要提前打斷它收尾。
+AGENT_RECURSION_LIMIT = 40
 
 
 def _scope_clause(scope: str | None) -> str:
@@ -65,12 +75,20 @@ def _scope_clause(scope: str | None) -> str:
 
 
 def _build_system_prompt(scope: str | None = None) -> str:
-    return f"""你是《南投縣信義鄉志》的問答助理，負責回答關於信義鄉的知識性問題。
+    return f"""你是《南投縣信義鄉志》的問答助理，服務對象是教授與相關領域的專業研究者，
+負責回答關於信義鄉的知識性問題。
 
 【核心規則，絕對不能違反】：
 你只能根據 {SEARCH_TOOL_NAME} 工具實際檢索到的段落內容作答。如果某個面向沒有被
 檢索到，代表資料庫裡沒有（或你還沒找到），絕對不可以用你自己本來就知道的通用
 歷史/知識去填補、去杜撰。寧可答案涵蓋的面向少一點，也不能講出查無來源的內容。
+
+【回答對象與詳細程度】：
+使用者具備學術或專業背景，不需要簡化用詞或省略細節。回答時盡量把檢索到的段落
+裡出現的具體事實都寫進去（例如確切年代、人名、地名、統計數據、制度或機構
+名稱），不要只挑重點簡短帶過或用籠統字眼概括；如果不同段落的說法有出入、或
+資料只涵蓋問題的部分面向，要如實指出這些落差與限制，不要為了讓答案看起來完整
+而抹平細節。
 
 【追求全面性】：
 如果問題是廣泛性的提問（例如「發生過哪些重要事件」「有哪些影響」），只查一次
@@ -78,7 +96,10 @@ def _build_system_prompt(scope: str | None = None) -> str:
 政治／軍事、社會制度、教育、交通建設、經濟產業、宗教信仰等不同面向各查一次），
 盡量讓答案涵蓋多個不同面向，而不是查到看起來像有答案就停手。最多可呼叫檢索工具
 {MAX_TOOL_CALLS_HINT} 次；如果問題本身很具體、單次檢索就已經找齊需要的資訊，
-不需要硬湊次數。
+不需要硬湊次數。**一旦已經呼叫了 {MAX_TOOL_CALLS_HINT} 次（或你評估已經涵蓋
+足夠面向），就不要再嘗試呼叫檢索工具**，直接根據目前查到的內容整理成最終答案；
+超過上限後再呼叫工具會被系統擋下來、徒然浪費你可用的推理回合數，反而讓你更難
+順利整理出結論。
 
 【回答格式，準確標註來源是重點】：
 - answer：完整、分點列出的回答，繁體中文。每次引用某個檢索到的段落時，緊接在
@@ -106,7 +127,8 @@ def _make_search_tool(citation_pool: dict[str, Citation], source_type: str | Non
         results = search_similar(query, k=k, source_type=source_type)
         for r in results:
             citation_pool[r.id] = Citation(
-                id=r.id, source=r.source, page=r.page, paragraph=r.paragraph, score=r.score
+                id=r.id, source=r.source, page=r.page, paragraph=r.paragraph, score=r.score,
+                images=r.images,
             )
         return json.dumps(
             [
@@ -132,8 +154,10 @@ def _count_search_calls(messages: list) -> tuple[int, list[str]]:
 
 def answer_with_agent(
     question: str, source_type: str | None = None, scope: str | None = None
-) -> tuple[AgentAnswer, list[Citation], int, list[str]]:
-    """執行 agent 編排問答，回傳結構化答案、引用來源、實際呼叫檢索工具次數與查詢字句。
+) -> tuple[AgentAnswer, list[Citation], int, list[str], list[SimilarParagraph]]:
+    """執行 agent 編排問答，回傳結構化答案、引用來源、實際呼叫檢索工具次數、查詢字句、
+    以及獨立檢索到的相關圖片（見 query_engine.search_images()——跟 agent 自己動態呼叫
+    的文字檢索完全分開，用原始問題單獨查一次，不佔用、也不受 agent 檢索次數影響）。
     source_type：限定這次對話全程只從「論文」或「書籍」來源檢索，None 表示不限——
     這是整次對話固定的搜尋範圍（由呼叫端／UI 決定），不是讓 agent 自己每次呼叫時判斷。
     scope：SCOPE_XINYI 限定只用明確跟信義鄉相關的段落作答，None／SCOPE_NANTOU 不限。
@@ -157,7 +181,7 @@ def answer_with_agent(
     try:
         result = agent.invoke(
             {"messages": [{"role": "user", "content": question}]},
-            config={"recursion_limit": 20},
+            config={"recursion_limit": AGENT_RECURSION_LIMIT},
         )
     except GraphRecursionError:
         fallback = AgentAnswer(
@@ -167,7 +191,7 @@ def answer_with_agent(
             ),
             cited_ids=[],
         )
-        return fallback, [], 0, []
+        return fallback, [], 0, [], []
 
     call_count, queries = _count_search_calls(result["messages"])
 
@@ -177,28 +201,33 @@ def answer_with_agent(
     # 因為重複段落出現兩次而錯亂。
     unique_ids = list(dict.fromkeys(structured.cited_ids))
     citations = [citation_pool[cid] for cid in unique_ids if cid in citation_pool]
-    return structured, citations, call_count, queries
+    images = search_images(question, source_type=source_type)
+    return structured, citations, call_count, queries, images
 
 
-def _print_answer(answer: str, citations: list[Citation]) -> None:
+def _print_answer(answer: str, citations: list[Citation], images: list[SimilarParagraph] | None = None) -> None:
     print(answer)
     print("\n引用來源：")
     for c in citations:
         print(f"  - {c.id}｜{c.source} 第 {c.page} 頁（相關度 {c.score:.0%}）")
         preview = c.paragraph[:200].replace("\n", " ")
         print(f"    {preview}{'...' if len(c.paragraph) > 200 else ''}")
+    if images:
+        print("\n相關圖片：")
+        for r in images:
+            print(f"  - {r.id}｜{r.source} 第 {r.page} 頁 → {', '.join(r.images)}")
 
 
 def compare_with_single_shot(question: str, source_type: str | None = None, scope: str | None = None) -> None:
     print("=" * 20, "單次版 answer_question()（query_engine.py）", "=" * 20)
     single = answer_question(question, source_type=source_type, scope=scope)
-    _print_answer(single.answer, single.citations)
+    _print_answer(single.answer, single.citations, single.images)
     print(f"\n引用段落數：{len(single.citations)}")
 
     print("\n" + "=" * 20, "Agentic 版 answer_with_agent()", "=" * 20)
-    structured, citations, call_count, queries = answer_with_agent(question, source_type=source_type, scope=scope)
+    structured, citations, call_count, queries, images = answer_with_agent(question, source_type=source_type, scope=scope)
     print(f"呼叫檢索工具 {call_count} 次：{queries}")
-    _print_answer(structured.answer, citations)
+    _print_answer(structured.answer, citations, images)
     print(f"\n引用段落數：{len(citations)}")
 
 
@@ -224,11 +253,11 @@ def main() -> None:
         compare_with_single_shot(args.ask, source_type=args.source_type, scope=args.scope)
         return
 
-    structured, citations, call_count, queries = answer_with_agent(
+    structured, citations, call_count, queries, images = answer_with_agent(
         args.ask, source_type=args.source_type, scope=args.scope
     )
     print(f"呼叫檢索工具 {call_count} 次：{queries}\n")
-    _print_answer(structured.answer, citations)
+    _print_answer(structured.answer, citations, images)
 
 
 if __name__ == "__main__":
