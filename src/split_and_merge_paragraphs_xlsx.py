@@ -29,7 +29,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT_DIR = ROOT / "output" if config is None else config.OUTPUT_DIR
 
-_PAPER_ID_RE = re.compile(r"^P(\d+)-", re.IGNORECASE)
+_PAPER_ID_RE = re.compile(r"^98-(\d+)-")  # 98＝信義鄉布農族博碩士論文來源代碼，見 src/data/source_codes.py
 
 COL_ID = 1
 COL_PARA = 2
@@ -527,7 +527,7 @@ def process_paragraphs_xlsx(
             continue
 
         safe = _sanitize_filename(block.source_name) if block.source_name else f"paper_{paper_idx}"
-        out_name = f"P{paper_idx}_{safe}_{date_suffix}.xlsx"
+        out_name = f"98-{paper_idx}_{safe}_{date_suffix}.xlsx"
         out_path = by_paper_dir / out_name
 
         paper_wb = Workbook()

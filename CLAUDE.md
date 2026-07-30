@@ -66,7 +66,7 @@ paper/*.pdf
                                     src/data/build_labeled_corpus.py
                                                         │
                                           src/data/labeled_corpus.jsonl
-                                    （10,099 筆已分類段落，這是 RAG／LangChain／
+                                    （13,335 筆已分類段落，這是 RAG／LangChain／
                                      fine-tuning 全部模組共用的唯一語料來源）
                                                         │
                     ┌───────────────┬───────────────┬───────────────┬───────────────┐
@@ -79,7 +79,9 @@ paper/*.pdf
 
 ### 平行實驗模組慣例（貫穿全專案的核心規範）
 
-`labeled_corpus.jsonl` 之上疊的每一個模組（RAG → LangChain chain → LangChain agent → Agentic RAG 問答 → fine-tuning）都嚴格遵守：**新增檔案，絕不修改前一層的程式碼，只讀取前一層產出的共用資料／函式**。例如 `classify_agent.py` 會直接 import `classify_chain.py` 裡的 `CATEGORIES`／`ClassificationResult`／`_load_corpus` 等共用物件，但不會改動 `classify_chain.py` 本身；沒有任何模組會寫回 Notion 或修改 `results/`、`labeled_corpus.jsonl`。改動某個模組前，先確認同樣的邏輯有沒有已經在更上游的模組定義過，直接 import 沿用。
+`labeled_corpus.jsonl` 之上疊的每一個模組（RAG → LangChain chain → LangChain agent → Agentic RAG 問答 → fine-tuning）都嚴格遵守：**新增檔案，絕不修改前一層的程式碼，只讀取前一層產出的共用資料／函式**。例如 `classify_agent.py` 會直接 import `classify_chain.py` 裡的 `CATEGORIES`／`ClassificationResult`／`_load_corpus` 等共用物件，但不會改動 `classify_chain.py` 本身；這幾個下游 AI 展示模組沒有任何一個會寫回 Notion 或修改 `results/`、`labeled_corpus.jsonl`。改動某個模組前，先確認同樣的邏輯有沒有已經在更上游的模組定義過，直接 import 沿用。
+
+（例外：`src/data/` 底下屬於「產生語料」這一層本身的一次性遷移／整併腳本——如 `migrate_ids.py`、`migrate_notion_ids.py`、`build_labeled_corpus.py`——本來就是負責寫 `results/*.json`／`labeled_corpus.jsonl`／同步 Notion 的地方，不算違反這條規範；這條規範限制的是「語料之上」的下游展示模組，不是語料產生本身。）
 
 ### 多供應商 LLM 選型不是隨意的
 
@@ -89,9 +91,18 @@ paper/*.pdf
 - `src/finetune/generate_qa.py`：Gemini（實測比較過 Claude／Gemini／Groq，Gemini 品質相當且成本約 1/8，Groq 有觀察到編造事實的幻覺問題）
 - fine-tuning 基底模型只用 `twinkle-ai/gemma-3-4B-T1-it`（原本也測過 Llama 版本，但 chat template 格式風險較高而放棄，見 README「本地 Fine-tuning」章節）
 
-### 成本控管：`.claude/hooks/cost_warning.py`
+### `.claude/hooks/`：PreToolUse 安全網（都攔截 Bash/PowerShell，不符合已知模式一律靜默放行）
 
-PreToolUse hook，攔截 Bash/PowerShell 指令，比對是否匹配已知的付費 API 呼叫模式（`classify_chain`／`classify_agent`／`generate_qa`／`notion_classify.py`／`build_index`／`query_engine` 等），符合就強制轉成需要使用者確認的權限提示，並附上**基於真實 token 用量換算**的花費估計（不是憑感覺估的數字，每個估計背後都有一次真實呼叫的來源記錄在檔案開頭的 docstring）。新增任何會呼叫付費 API 的腳本或指令模式時，記得同步在這支 hook 加對應分支。
+四支 hook 都在 `.claude/settings.json` 註冊在同一個 `Bash|PowerShell` matcher 下，依序執行：
+
+| Hook | 攔截什麼 | 動作 |
+|------|----------|------|
+| `cost_warning.py` | 已知的付費 API 呼叫模式（`classify_chain`／`classify_agent`／`generate_qa`／`notion_classify.py`／`build_index`／`query_engine` 等） | 轉成需要確認的權限提示，附上**基於真實 token 用量換算**的花費估計（每個估計背後都有一次真實呼叫的來源記錄在檔案開頭 docstring） |
+| `destructive_confirm.py` | 刪除核心語料／向量庫（`vectorstore/chroma`、`labeled_corpus.jsonl`、`results/`、`images/books/`、`backup/`）、`git push` 到 master/main 或帶 `--force`、會真的寫回 Notion 的指令（`notion_classify.py` 非 `--dry-run`、`migrate_notion_ids.py`） | 轉成需要確認的權限提示 |
+| `corpus_auto_backup.py` | 會覆寫 `labeled_corpus.jsonl` 或 Chroma 向量庫的腳本（`build_labeled_corpus`／`extract_books`／`build_index`／`add_to_index`／`patch_metadata`／`migrate_ids`／`migrate_vectorstore_ids`／`rename_migrated_images`／`promote_reviewed_images`） | 先自動跑 `python -m src.data.backup_corpus`（成功就靜默放行，失敗才轉成確認提示）；另外只動到 `vectorstore/chroma`／`deploy/rag_space/vectorstore/chroma` 其中一份時會提醒兩份是手動同步、記得同步過去 |
+| `deploy_checklist.py` | `gcloud run deploy`／`gcloud builds submit` | 提醒確認「語意空間視覺化、語料庫分析、資料來源、技術說明、更新日誌」5 個分頁／artifact 內容是否要同步更新；`gcloud run deploy` 沒帶 `--memory=` 會額外提醒（見 `deploy/rag_space/KNOWN_ISSUES.md` 的 1Gi 記憶體不足教訓） |
+
+新增會呼叫付費 API／刪除或寫回共用資料／覆寫語料庫的腳本或指令模式時，記得同步在對應的 hook 加分支。`src/data/backup_corpus.py` 是 `corpus_auto_backup.py` 呼叫的通用備份工具（帶時間戳記、預設只保留最近 5 份，避免每次觸發都佔用大量硬碟空間），也可以手動執行：`python -m src.data.backup_corpus`。
 
 ### `src/config.py`：分類流程集中設定
 
@@ -104,9 +115,13 @@ PreToolUse hook，攔截 Bash/PowerShell 指令，比對是否匹配已知的付
 
 `export_paragraphs.py`（v2）的 `run_on_paper_dir_for_paragraphs` 實際上內部呼叫的是 `export_paragraphs_v1.py` 的狀態機實作，v2 自己的 `extract_paragraphs_from_pdf` 目前只是備用、未串進主流程——改這塊之前先確認實際呼叫路徑。
 
-### 論文 ID 規則
+### id／source 欄位格式（2026-07 標準化，見 `src/data/source_codes.py`）
 
-PDF 檔名以數字開頭（`01-`、`02-`…），對應到匯出資料的 ID 格式 `P{論文序號}-{段落序號}`（如 `P1-3`）。序號有缺號（03、04…）代表該論文尚未收入。
+`labeled_corpus.jsonl` 每筆的 `id` 格式是 `{來源代碼}-{原序號}-{段落序號}`，來源代碼是 14 種資料來源（論文、縣志、公文檔案等）各自固定的兩到三碼數字，定義在 `src/data/source_codes.py` 的 `SOURCE_CODES`，供之後新增其他來源類型時直接查表擴充，不要另外發明新的前綴規則：
+
+- 論文（代碼 `98`，信義鄉布農族博碩士論文）：PDF 檔名以數字開頭（`01-`、`02-`…）對應論文序號，id 如 `98-11-200`。序號有缺號（03、04…）代表該論文尚未收入。`source` 欄位是腳註引用格式（`作者，〈篇名〉（學校地：系所，畢業年），頁X。`），書目資料存在 `src/data/paper_bibliography.json`（由 `src/data/build_paper_bibliography.py` 一次性從 `paper/信義鄉布農族博碩士論文.docx`＋`paper/台灣大專院校地址名冊.xls` 解析產生，之後新增的論文直接手動補一筆進 json，不用重跑該腳本），組裝邏輯在 `src/data/paper_bibliography.py::format_paper_citation()`。
+- 縣志（代碼 `92`，南投縣志稿＆南投縣志＆續修南投縣志）：id 如 `92-01-079`，`source` 欄位維持 `南投縣志｜卷別 篇名｜條目名` 格式，不套用腳註格式。
+- `build_index.py` 的 `source_type`（UI／CLI 篩選用的「論文」／「書籍」粗分類）改用 `source_codes.py::source_type_for_id()` 查表，不要再用 id 前綴字母判斷。
 
 ### 部署（`deploy/rag_space/`）
 
@@ -115,4 +130,3 @@ Cloud Run 上線的 Gradio 展示網站，是 `query_engine.py`／`answer_agent.
 ### 其他
 
 - `.cursor/skills/gazetteer-format-check`：依 `This_plan/信義鄉志服務建議書.pdf` 的編纂凡例／撰寫格式（紀年、標點、註腳格式等）檢核文稿的技能，處理跟鄉志正式出版格式相關的任務時用得上。
-- `results/`、`batch_states/`、`.env`、`output/`、`vectorstore/`、`src/finetune/data/`、`src/finetune/adapters/`、`deploy/` 都是執行產物或機密設定，已在 `.gitignore`，不會進版控。

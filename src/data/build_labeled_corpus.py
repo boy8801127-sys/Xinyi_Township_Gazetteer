@@ -16,6 +16,9 @@ from pathlib import Path
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 
+from .paper_bibliography import format_paper_citation
+from .source_codes import code_of
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 RESULTS_DIR = ROOT / "results"
 OUTPUT_DIR = ROOT / "output"
@@ -83,11 +86,17 @@ def build_corpus() -> None:
                 continue
             seen_ids.add(notion_id)
 
+            page = row.get("頁數", "")
+            source = row.get("來源文章", "")
+            if code_of(notion_id) == "98":
+                paper_index = notion_id.split("-")[1]
+                source = format_paper_citation(paper_index, page) or source
+
             entry = {
                 "id": notion_id,
                 "paragraph": rec["paragraph"],
-                "source": row.get("來源文章", ""),
-                "page": row.get("頁數", ""),
+                "source": source,
+                "page": page,
                 "categories": rec["categories"],
                 "reason": rec.get("reason", ""),
                 "keywords": rec.get("keywords", []),

@@ -17,7 +17,7 @@ notion_classify.py 手寫的 JSON 解析與分類名稱修正邏輯。
 
 CLI 使用方式：
     python -m src.langchain_pipeline.classify_chain --text "段落文字…"
-    python -m src.langchain_pipeline.classify_chain --paper-id P11-199
+    python -m src.langchain_pipeline.classify_chain --paper-id 98-11-199
     python -m src.langchain_pipeline.classify_chain --compare --sample 10
 """
 from __future__ import annotations

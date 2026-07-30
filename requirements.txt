@@ -23,3 +23,5 @@ langchain-google-genai>=2.0.0
 # 圖片審閱小工具（src/data/review_tool.py）的文字圖層 OCR，純本機運算，
 # 另需系統安裝 Tesseract 引擎：winget install --id UB-Mannheim.TesseractOCR
 pytesseract>=0.3.10
+# src/data/build_paper_bibliography.py 讀取台灣大專院校地址名冊（.xls，舊版 Excel 二進位格式）
+xlrd>=2.0.1

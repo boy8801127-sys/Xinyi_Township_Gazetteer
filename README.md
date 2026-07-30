@@ -137,7 +137,7 @@ python notion_classify.py --apply-local results/xxx.json  # 只補寫尚未成�
 
 | 腳本 | 用途 |
 |------|------|
-| `src/split_and_merge_paragraphs_xlsx.py` | 匯出的段落 xlsx 後處理：合併孤兒空白 ID、依 `P{論文序號}` 分篇、合併跨列的段落／頁數，輸出各篇 xlsx 與合併總檔 |
+| `src/split_and_merge_paragraphs_xlsx.py` | 匯出的段落 xlsx 後處理：合併孤兒空白 ID、依 `98-{論文序號}` 分篇、合併跨列的段落／頁數，輸出各篇 xlsx 與合併總檔 |
 | `calc_cost.py` | 查詢指定 batch 的 token 用量，試算 Claude Batch API 費用 |
 | `fix_errors.py` | 修復個別寫入失敗的分類記錄 |
 
@@ -276,7 +276,7 @@ ClassificationResult（categories／reason／keywords，型別已驗證）
 
 ```bash
 python -m src.langchain_pipeline.classify_chain --text "段落文字…"        # 單段測試，印出動態 few-shot 範例與分類結果
-python -m src.langchain_pipeline.classify_chain --paper-id P11-199       # 從語料撈一筆段落，並對照原本的分類
+python -m src.langchain_pipeline.classify_chain --paper-id 98-11-199     # 從語料撈一筆段落，並對照原本的分類
 python -m src.langchain_pipeline.classify_chain --compare --sample 10    # 抽樣比較動態 chain 與既有語料的靜態分類，統計一致率
 ```
 
@@ -333,7 +333,7 @@ create_agent(model=ChatAnthropic, tools=[search_similar_paragraphs], response_fo
 
 ```bash
 python -m src.langchain_pipeline.classify_agent --text "段落文字…"        # 單段測試，印出實際呼叫工具次數與查詢字句
-python -m src.langchain_pipeline.classify_agent --paper-id P13-1126      # 從語料撈一筆段落，並對照原本的分類
+python -m src.langchain_pipeline.classify_agent --paper-id 98-13-1126    # 從語料撈一筆段落，並對照原本的分類
 python -m src.langchain_pipeline.classify_agent --compare --sample 10    # 抽樣比較 agent 與既有語料的靜態分類，統計一致率與平均呼叫次數
 ```
 

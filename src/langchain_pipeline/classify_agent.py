@@ -14,7 +14,7 @@ classify_chain.py 用 LCEL 把「檢索 → 組 prompt → 結構化輸出」寫
 
 CLI 使用方式：
     python -m src.langchain_pipeline.classify_agent --text "段落文字…"
-    python -m src.langchain_pipeline.classify_agent --paper-id P13-1126
+    python -m src.langchain_pipeline.classify_agent --paper-id 98-13-1126
     python -m src.langchain_pipeline.classify_agent --compare --sample 5 --seed 42
 """
 from __future__ import annotations

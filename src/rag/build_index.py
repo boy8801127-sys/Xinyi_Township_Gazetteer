@@ -24,6 +24,8 @@ from llama_index.core.schema import TextNode
 from llama_index.embeddings.voyageai import VoyageEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 
+from src.data.source_codes import source_type_for_id
+
 load_dotenv()
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -52,9 +54,8 @@ def _to_node(entry: dict) -> TextNode:
     categories = entry.get("categories", [])
     keywords = entry.get("keywords", [])
     images = entry.get("images", [])
-    # id 前綴代表資料來源類型（見 src/data/extract_books.py／export_paragraphs.py 的編號規則）：
-    # B 開頭＝《南投縣志》等書籍內容，其餘（P 開頭）＝碩博士論文，供 UI／CLI 依來源篩選用。
-    source_type = "書籍" if entry["id"].startswith("B") else "論文"
+    # id 開頭的來源代碼代表資料來源類型（見 src/data/source_codes.py），供 UI／CLI 依來源篩選用。
+    source_type = source_type_for_id(entry["id"])
     return TextNode(
         id_=entry["id"],
         text=entry["paragraph"],

@@ -213,7 +213,7 @@ def extract_all(only_docx: Path | None = None) -> list[dict]:
             page = _page_from_filename(filename)
             title = _PAGE_SUFFIX_RE.sub("", filename).strip()
             source = f"{BOOK_NAME}｜{folder_name}｜{title}" if title else f"{BOOK_NAME}｜{folder_name}"
-            entry_id = f"B{vol_idx:02d}-{table_idx:03d}"
+            entry_id = f"92-{vol_idx:02d}-{table_idx:03d}"
 
             image_filename = ""
             if image_bytes:

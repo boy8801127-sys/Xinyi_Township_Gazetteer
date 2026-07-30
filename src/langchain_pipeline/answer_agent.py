@@ -39,6 +39,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.errors import GraphRecursionError
 from pydantic import BaseModel, Field
 
+from src.data.source_codes import citation_includes_page
 from src.rag.query_engine import (
     SCOPE_NANTOU,
     SCOPE_XINYI,
@@ -104,11 +105,11 @@ def _build_system_prompt(scope: str | None = None) -> str:
 【回答格式，準確標註來源是重點】：
 - answer：完整、分點列出的回答，繁體中文。每次引用某個檢索到的段落時，緊接在
   對應句子後面用中括號標註該段落的 id（例如「信義鄉在日治時期設有蕃童教育所
-  [B17-021]」），id 必須跟 {SEARCH_TOOL_NAME} 回傳結果裡的 "id" 欄位完全一致，
+  [92-17-021]」），id 必須跟 {SEARCH_TOOL_NAME} 回傳結果裡的 "id" 欄位完全一致，
   一字不差——這個標記會被轉成可點擊的連結，id 錯誤會導致連結失效。沒有實際引用
   依據的句子不要加標記。**一句話同時引用多個段落時，每個 id 要各自用一對中括號
-  分開寫**，例如「原住民以布農族為主 [P55-185][P11-80]」，不要寫成
-  「[P55-185, P11-80]」（逗號寫在同一個中括號裡無法個別轉成連結）。
+  分開寫**，例如「原住民以布農族為主 [98-55-185][98-11-80]」，不要寫成
+  「[98-55-185, 98-11-80]」（逗號寫在同一個中括號裡無法個別轉成連結）。
 - cited_ids：實際引用來當作答案依據的段落 id 清單，必須跟 answer 裡標註的 id
   完全一致（同一組 id、不多不少），只列真的用到的，不要照抄全部檢索結果{_scope_clause(scope)}"""
 
@@ -205,17 +206,22 @@ def answer_with_agent(
     return structured, citations, call_count, queries, images
 
 
+def _page_suffix(entry_id: str, page: str) -> str:
+    """論文的 source 已經內含頁碼（見 format_paper_citation()），不要再重複加印「第 X 頁」。"""
+    return "" if citation_includes_page(entry_id) else f" 第 {page} 頁"
+
+
 def _print_answer(answer: str, citations: list[Citation], images: list[SimilarParagraph] | None = None) -> None:
     print(answer)
     print("\n引用來源：")
     for c in citations:
-        print(f"  - {c.id}｜{c.source} 第 {c.page} 頁（相關度 {c.score:.0%}）")
+        print(f"  - {c.id}｜{c.source}{_page_suffix(c.id, c.page)}（相關度 {c.score:.0%}）")
         preview = c.paragraph[:200].replace("\n", " ")
         print(f"    {preview}{'...' if len(c.paragraph) > 200 else ''}")
     if images:
         print("\n相關圖片：")
         for r in images:
-            print(f"  - {r.id}｜{r.source} 第 {r.page} 頁 → {', '.join(r.images)}")
+            print(f"  - {r.id}｜{r.source}{_page_suffix(r.id, r.page)} → {', '.join(r.images)}")
 
 
 def compare_with_single_shot(question: str, source_type: str | None = None, scope: str | None = None) -> None:

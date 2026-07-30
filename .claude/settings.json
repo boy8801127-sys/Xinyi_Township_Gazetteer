@@ -9,6 +9,24 @@
             "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/cost_warning.py\"",
             "timeout": 10,
             "statusMessage": "檢查是否會呼叫付費 API…"
+          },
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/destructive_confirm.py\"",
+            "timeout": 10,
+            "statusMessage": "檢查是否為刪除核心資料／push 主分支／寫入 Notion 的指令…"
+          },
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/corpus_auto_backup.py\"",
+            "timeout": 120,
+            "statusMessage": "檢查是否需要先備份語料庫／向量庫…"
+          },
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/deploy_checklist.py\"",
+            "timeout": 10,
+            "statusMessage": "檢查部署前清單…"
           }
         ]
       }

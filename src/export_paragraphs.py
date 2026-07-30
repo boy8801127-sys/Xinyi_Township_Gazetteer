@@ -602,7 +602,7 @@ def export_paragraphs_all(rows: list[dict[str, Any]], output_dir: Path | None = 
                 fallback_counter += 1
             para_idx = 1
             for r in by_source[src]:
-                pid = f"P{paper_index}-{para_idx}"
+                pid = f"98-{paper_index}-{para_idx}"
                 para_idx += 1
                 writer.writerow({
                     "ID": pid,
@@ -638,7 +638,7 @@ def export_paragraphs_by_paper(rows: list[dict[str, Any]], output_dir: Path | No
             paper_index = _get_paper_index_from_source_name(src, 1)
             para_idx = 1
             for r in sub:
-                pid = f"P{paper_index}-{para_idx}"
+                pid = f"98-{paper_index}-{para_idx}"
                 para_idx += 1
                 writer.writerow({
                     "ID": pid,

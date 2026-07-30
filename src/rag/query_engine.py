@@ -47,6 +47,8 @@ from llama_index.embeddings.voyageai import VoyageEmbedding
 from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.vector_stores.chroma import ChromaVectorStore
 
+from src.data.source_codes import citation_includes_page
+
 load_dotenv()
 
 # 地理範圍篩選的兩個合法值（UI 的 Radio 選項、answer_agent.py 都共用這組字面值，
@@ -318,11 +320,16 @@ def answer_question(
     )
 
 
+def _page_suffix(entry_id: str, page: str) -> str:
+    """論文的 source 已經內含頁碼（見 format_paper_citation()），不要再重複加印「第 X 頁」。"""
+    return "" if citation_includes_page(entry_id) else f" 第 {page} 頁"
+
+
 def _print_search_results(results: list[SimilarParagraph]) -> None:
     for i, r in enumerate(results, 1):
         preview = r.paragraph[:60].replace("\n", " ")
         print(f"[{i}] {r.id} (score={r.score:.3f}) | {' / '.join(r.categories)}")
-        print(f"    來源：{r.source} 第 {r.page} 頁")
+        print(f"    來源：{r.source}{_page_suffix(r.id, r.page)}")
         print(f"    {preview}...")
 
 
@@ -330,13 +337,13 @@ def _print_answer(result: AnswerWithCitations) -> None:
     print(result.answer)
     print("\n引用來源：")
     for c in result.citations:
-        print(f"  - {c.id}｜{c.source} 第 {c.page} 頁（相關度 {c.score:.0%}）")
+        print(f"  - {c.id}｜{c.source}{_page_suffix(c.id, c.page)}（相關度 {c.score:.0%}）")
         preview = c.paragraph[:200].replace("\n", " ")
         print(f"    {preview}{'...' if len(c.paragraph) > 200 else ''}")
     if result.images:
         print("\n相關圖片：")
         for r in result.images:
-            print(f"  - {r.id}｜{r.source} 第 {r.page} 頁 → {', '.join(r.images)}")
+            print(f"  - {r.id}｜{r.source}{_page_suffix(r.id, r.page)} → {', '.join(r.images)}")
 
 
 def main() -> None:

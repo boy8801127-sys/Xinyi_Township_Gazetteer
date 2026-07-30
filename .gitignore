@@ -49,3 +49,8 @@ books/
 # 個人作品集素材（簡報、截圖，非專案程式碼）
 photo/
 ppt/
+
+# 一次性資料遷移前的備份（src/data/backup_before_id_migration.py 產生），
+# 內容是 results/、labeled_corpus.jsonl、images/、vectorstore/ 的複本，
+# 跟這些原始目錄一樣不該進版控
+backup/
