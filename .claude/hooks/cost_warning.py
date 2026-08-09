@@ -47,6 +47,12 @@ OUTPUT_RATE_BATCH = 2.50
 GEMINI_FLASH_LITE_INPUT_RATE = 0.25
 GEMINI_FLASH_LITE_OUTPUT_RATE = 1.50
 
+# gemini-flash-lite-latest 定價（USD / 1M tokens，2026-07 查證，比照 query_engine.py／
+# classify_journal_with_gemini.py 的選型依據）——注意這跟上面 generate_qa.py 用的舊版
+# gemini-3.1-flash-lite（$0.25/$1.50）是不同一組定價，不要共用常數。
+GEMINI_FLASH_LITE_LATEST_INPUT_RATE = 0.30
+GEMINI_FLASH_LITE_LATEST_OUTPUT_RATE = 2.50
+
 # 實測 token 數（見上方 docstring 來源說明）
 NOTION_INPUT_TOKENS_PER_ITEM = 38_066_941 / 10_099
 NOTION_OUTPUT_TOKENS_PER_ITEM = 1_817_689 / 10_099
@@ -152,6 +158,22 @@ def main() -> None:
             f"{mode}，依 57 個 batch 的真實歷史數據（10,099 筆均攤）每筆約 ${per_item:.5f} USD，"
             f"實際花費依待分類筆數而定。例如 100 筆約 ${per_item * 100:.2f} USD、"
             f"1000 筆約 ${per_item * 1000:.2f} USD。"
+        )
+
+    elif "classify_journal_with_gemini" in cmd and "--run" in cmd:
+        # --estimate-cost 模式完全不呼叫付費 API（純本機用真實歷史 token 均價換算），
+        # 故意不攔——只有 --run 才真的會打 Gemini API，比照 notion_classify.py 的精神。
+        reason = "會呼叫 Gemini API（gemini-flash-lite-latest）對期刊論文段落做分類與關鍵字擷取"
+        reason += "。" if "--dry-run" in cmd else "，並寫回 Notion。"
+        per_item = _token_cost(
+            NOTION_INPUT_TOKENS_PER_ITEM, NOTION_OUTPUT_TOKENS_PER_ITEM,
+            GEMINI_FLASH_LITE_LATEST_INPUT_RATE, GEMINI_FLASH_LITE_LATEST_OUTPUT_RATE,
+        )
+        estimate = (
+            f"沿用 notion_classify.py 對 10,099 筆既有資料的真實平均 token 用量換算"
+            f"（同一套 SYSTEM_PROMPT／分類任務），每筆約 ${per_item:.5f} USD，"
+            f"實際花費依待分類筆數而定（例如 100 筆約 ${per_item * 100:.2f} USD、"
+            f"500 筆約 ${per_item * 500:.2f} USD）。"
         )
 
     elif "build_index" in cmd:

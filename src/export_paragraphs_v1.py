@@ -33,14 +33,6 @@ def _is_abstract_end(text: str) -> bool:
     return _matches_any(text, config.ABSTRACT_END_KEYWORDS)
 
 
-def _is_body_start(text: str) -> bool:
-    return _matches_any(text, config.BODY_START_KEYWORDS)
-
-
-def _is_body_end(text: str) -> bool:
-    return _matches_any(text, config.BODY_END_KEYWORDS)
-
-
 _ROMAN_RE = re.compile(r"^[IVXLCDM]+$", re.IGNORECASE)
 _TOC_DOTS_RE = re.compile(r"\.{5,}")
 _FIGURE_TITLE_RE = re.compile(r"^(圖|表)\s*\d+([－\-]\d+)?")
@@ -380,7 +372,16 @@ def _split_by_period(lines_with_pages: list[tuple[str, int]]) -> list[tuple[str,
     return sentences
 
 
-def extract_paragraphs_from_pdf(pdf_path: Path, show_progress: bool = False) -> list[dict[str, Any]]:
+def extract_paragraphs_from_pdf(
+    pdf_path: Path,
+    show_progress: bool = False,
+    body_start_keywords: tuple[str, ...] | None = None,
+    body_end_keywords: tuple[str, ...] | None = None,
+    extra_body_start_re: str | None = None,
+    extra_section_heading_re: str | None = None,
+    skip_pages: set[int] | None = None,
+    precomputed_lines: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """
     從單一 PDF 擷取「摘要＋內文」的語意段落。
 
@@ -390,17 +391,56 @@ def extract_paragraphs_from_pdf(pdf_path: Path, show_progress: bool = False) -> 
     3. 摘要：依 _is_abstract_heading 分段；內文：每句章節切分，迴圈內合併成段落
     4. 合併短段
     5. 過長段落再切分
-    """
-    if fitz is None:
-        raise RuntimeError("請安裝 PyMuPDF：pip install PyMuPDF")
 
-    doc = fitz.open(pdf_path)
-    try:
-        if show_progress:
-            print(f"    擷取文字…", flush=True)
-        all_lines = _iter_page_lines(doc, show_progress)
-    finally:
-        doc.close()
+    `body_start_keywords`／`body_end_keywords`／`extra_body_start_re`／
+    `extra_section_heading_re`／`skip_pages` 皆為選用參數，預設 None 時完全比照
+    原本只吃 config 常數的行為（學位論文既有呼叫路徑不受影響）。期刊論文（章節
+    編號習慣不同、標題常被排版拆成多行）會傳入 `config.JOURNAL_BODY_START_KEYWORDS`
+    等專用設定，見 export_paragraphs_journal.py。`extra_section_heading_re` 專門
+    給本文內部（Step 3）判斷「這句是不是新小節標題」用，跟 `extra_body_start_re`
+    （只管「從摘要轉進本文」那一次性判斷）是兩件事——期刊論文常見「1、」「2.」這種
+    純阿拉伯數字節標題，兩個參數通常會傳同一個 regex，但語意跟生效範圍不同，
+    不要合併成一個參數。
+
+    `precomputed_lines`：給定時完全略過「開 PDF、讀內嵌文字層」這一步，直接拿這份
+    `[{"page": int, "text": str}, ...]` 走後面的狀態機／分段邏輯——用於掃描版 PDF
+    （沒有文字層或文字層品質太差）先用 Tesseract OCR 逐頁辨識出文字，再餵回這裡沿用
+    既有的段落切分邏輯，見 src/export_paragraphs_journal.py 的 `_ocr_pdf_lines()`。
+    """
+    if precomputed_lines is not None:
+        all_lines = precomputed_lines
+    else:
+        if fitz is None:
+            raise RuntimeError("請安裝 PyMuPDF：pip install PyMuPDF")
+        doc = fitz.open(pdf_path)
+        try:
+            if show_progress:
+                print(f"    擷取文字…", flush=True)
+            all_lines = _iter_page_lines(doc, show_progress)
+        finally:
+            doc.close()
+
+    start_keywords = body_start_keywords if body_start_keywords is not None else config.BODY_START_KEYWORDS
+    end_keywords = body_end_keywords if body_end_keywords is not None else config.BODY_END_KEYWORDS
+    _extra_start_re = re.compile(extra_body_start_re) if extra_body_start_re else None
+    _extra_heading_re = re.compile(extra_section_heading_re) if extra_section_heading_re else None
+
+    def _body_start(norm: str) -> bool:
+        if _matches_any(norm, start_keywords):
+            return True
+        return bool(_extra_start_re and _extra_start_re.match(norm))
+
+    def _body_end(norm: str) -> bool:
+        return _matches_any(norm, end_keywords)
+
+    def _section_heading(text: str) -> bool:
+        if _is_section_heading(text):
+            return True
+        norm = _normalize(text)
+        return bool(_extra_heading_re and _extra_heading_re.match(norm))
+
+    if skip_pages:
+        all_lines = [line_info for line_info in all_lines if line_info["page"] not in skip_pages]
 
     if not all_lines:
         return []
@@ -425,7 +465,7 @@ def extract_paragraphs_from_pdf(pdf_path: Path, show_progress: bool = False) -> 
         text = text.strip()
         norm = _normalize(text)
 
-        if state == "in_body" and _is_body_end(norm):
+        if state == "in_body" and _body_end(norm):
             state = "after_body"
             continue
 
@@ -434,7 +474,7 @@ def extract_paragraphs_from_pdf(pdf_path: Path, show_progress: bool = False) -> 
         elif state == "in_abstract" and _is_abstract_end(norm):
             state = "after_abstract_before_body"
             continue
-        elif state in ("before_abstract", "after_abstract_before_body") and _is_body_start(norm):
+        elif state in ("before_abstract", "after_abstract_before_body") and _body_start(norm):
             state = "in_body"
 
         if state == "in_abstract":
@@ -495,7 +535,7 @@ def extract_paragraphs_from_pdf(pdf_path: Path, show_progress: bool = False) -> 
             else:
                 sub_chunks = _split_by_section_patterns(sent_text)
                 for chunk in sub_chunks:
-                    chunk_heading = _is_section_heading(chunk)
+                    chunk_heading = _section_heading(chunk)
                     if chunk_heading:
                         flush_paragraph()
                         cur_texts = [chunk]

@@ -127,8 +127,8 @@ def _is_orphan_blank_id(ws: Worksheet, row: int, col_id: int) -> bool:
     return not _is_excel_merged_blank(ws, row, col_id)
 
 
-def _paper_index_from_id(row_id: str) -> str | None:
-    m = _PAPER_ID_RE.match((row_id or "").strip())
+def _paper_index_from_id(row_id: str, paper_id_re: re.Pattern[str] | None = None) -> str | None:
+    m = (paper_id_re or _PAPER_ID_RE).match((row_id or "").strip())
     return m.group(1) if m else None
 
 
@@ -173,8 +173,10 @@ def merge_orphan_id_cells(ws: Worksheet, header_map: dict[str, int]) -> int:
     return merges_added
 
 
-def split_worksheet_by_paper(ws: Worksheet, header_map: dict[str, int]) -> dict[str, PaperBlock]:
-    """Step 1：依 P{數字} 分篇。"""
+def split_worksheet_by_paper(
+    ws: Worksheet, header_map: dict[str, int], paper_id_re: re.Pattern[str] | None = None
+) -> dict[str, PaperBlock]:
+    """Step 1：依 {來源代碼}-{數字}- 分篇。"""
     col_id = header_map["ID"]
     col_source = header_map["來源文章"]
     by_paper: dict[str, PaperBlock] = {}
@@ -185,7 +187,7 @@ def split_worksheet_by_paper(ws: Worksheet, header_map: dict[str, int]) -> dict[
             continue
 
         id_val = _id_cell_value(ws, row, col_id)
-        paper = _paper_index_from_id(id_val) if id_val else current_paper
+        paper = _paper_index_from_id(id_val, paper_id_re) if id_val else current_paper
         if paper is None:
             continue
 
@@ -484,9 +486,14 @@ def process_paragraphs_xlsx(
     input_path: Path,
     output_dir: Path | None = None,
     date_suffix: str | None = None,
+    source_code: str = "98",
 ) -> tuple[Path, list[Path], ProcessReport]:
     """
     執行完整四步驟流程。
+
+    `source_code` 預設 `"98"`（信義鄉布農族博碩士論文，維持既有行為），對應
+    id 開頭的來源代碼（見 src/data/source_codes.py）；期刊論文（代碼 97）等
+    其他來源呼叫時傳入對應代碼即可，不用另外寫一份流程。
 
     回傳：(合併總檔路徑, 各篇路徑列表, 處理報告)
     """
@@ -502,17 +509,22 @@ def process_paragraphs_xlsx(
         else:
             date_suffix = stem
 
+    paper_id_re = re.compile(rf"^{re.escape(source_code)}-(\d+)-")
+
     wb = load_workbook(input_path, data_only=False)
     ws = wb.active
     header_map = _get_header_map(ws)
     report = ProcessReport()
 
     report.a_merges_added = merge_orphan_id_cells(ws, header_map)
-    by_paper = split_worksheet_by_paper(ws, header_map)
+    by_paper = split_worksheet_by_paper(ws, header_map, paper_id_re)
     report.paper_count = len(by_paper)
     report.bd_merges_added = process_paper_blocks(ws, header_map, by_paper)
 
-    all_path = base_dir / f"paragraphs_all_merged_{date_suffix}.xlsx"
+    # 檔名帶 source_code：不同來源代碼（例如 98 學位論文、97 期刊論文）用同一個
+    # date_suffix 處理時，合併總檔不會互相覆寫（各篇檔案在 paragraphs_by_paper_xlsx/
+    # 底下本來就已經用 source_code 前綴區分，這裡讓合併總檔也比照辦理）。
+    all_path = base_dir / f"paragraphs_all_merged_{source_code}_{date_suffix}.xlsx"
     combined_wb = Workbook()
     combined_ws = combined_wb.active
     combined_ws.title = "paragraphs"
@@ -527,7 +539,7 @@ def process_paragraphs_xlsx(
             continue
 
         safe = _sanitize_filename(block.source_name) if block.source_name else f"paper_{paper_idx}"
-        out_name = f"98-{paper_idx}_{safe}_{date_suffix}.xlsx"
+        out_name = f"{source_code}-{paper_idx}_{safe}_{date_suffix}.xlsx"
         out_path = by_paper_dir / out_name
 
         paper_wb = Workbook()

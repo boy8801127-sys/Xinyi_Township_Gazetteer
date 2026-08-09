@@ -13,8 +13,9 @@ PreToolUse hook（Bash / PowerShell）。
 2. git push 到 master/main，或帶 --force／-f 的 push——會影響遠端共用分支，
    force push 還可能覆蓋別人（或自己之後）的提交。
 3. 會真的寫回 Notion 資料庫的指令（notion_classify.py 非 --dry-run、
-   migrate_notion_ids.py）——Notion 資料庫是共用、線上的，寫錯沒有簡單的
-   復原機制（不像本機檔案可以從 backup/ 還原）。
+   migrate_notion_ids.py、classify_journal_with_gemini.py --run 非 --dry-run）
+   ——Notion 資料庫是共用、線上的，寫錯沒有簡單的復原機制（不像本機檔案可以
+   從 backup/ 還原）。
 
 新增會刪除／寫回共用資料的腳本或指令模式時，記得同步在這支 hook 加對應分支
 （比照 CLAUDE.md 對 cost_warning.py 的要求）。
@@ -105,6 +106,8 @@ def _check_notion_write(cmd: str) -> str | None:
         return "⚠️ 這個指令會批次寫入 Notion 資料庫的 \"ID\" 欄位（線上共用資料，寫錯沒有一鍵復原機制）。確定要繼續嗎？"
     if "notion_classify.py" in cmd and "--dry-run" not in cmd:
         return "⚠️ 這個指令會把分類結果實際寫回 Notion 資料庫（線上共用資料）。確定要繼續嗎？（--dry-run 可以先看結果不寫回）"
+    if "classify_journal_with_gemini" in cmd and "--run" in cmd and "--dry-run" not in cmd:
+        return "⚠️ 這個指令會把期刊論文分類結果實際寫回 Notion 資料庫（線上共用資料）。確定要繼續嗎？（--dry-run 可以先看結果不寫回）"
     return None
 
 

@@ -16,6 +16,7 @@ from pathlib import Path
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout.reconfigure(encoding="utf-8")
 
+from .journal_bibliography import format_journal_citation
 from .paper_bibliography import format_paper_citation
 from .source_codes import code_of
 
@@ -29,18 +30,50 @@ CSV_CANDIDATES = [
     OUTPUT_DIR / "paragraphs_all.csv",
 ]
 
+# 期刊論文（代碼 97）走獨立的擷取／人工複核流程（export_paragraphs_journal.py →
+# split_and_merge_paragraphs_xlsx.py），最終合併結果存在單獨的 CSV，不寫進
+# paragraphs_all_merged.csv（避免動到已經匯入 Notion 的既有 92／98 資料）——這裡
+# 額外合併讀入即可。之後其他來源代碼若也有類似獨立複核流程，比照這裡加一行。
+EXTRA_CSV_SOURCES = [
+    OUTPUT_DIR / "paragraphs_journal_final.csv",
+]
+
 
 def _load_paragraph_csv() -> dict[str, dict]:
+    rows: dict[str, dict] = {}
+    found_primary = False
     for path in CSV_CANDIDATES:
         if path.exists():
             print(f"讀取段落來源：{path.name}")
             with path.open(encoding="utf-8-sig", newline="") as f:
                 reader = csv.DictReader(f)
-                return {row["ID"]: row for row in reader if row.get("ID")}
-    raise FileNotFoundError(
-        f"找不到段落 CSV，需先執行 LLM 段落匯出（main.py 選項 4/5）。"
-        f"預期路徑：{[str(p) for p in CSV_CANDIDATES]}"
-    )
+                rows.update({row["ID"]: row for row in reader if row.get("ID")})
+            found_primary = True
+            break
+    if not found_primary:
+        raise FileNotFoundError(
+            f"找不到段落 CSV，需先執行 LLM 段落匯出（main.py 選項 4/5）。"
+            f"預期路徑：{[str(p) for p in CSV_CANDIDATES]}"
+        )
+
+    for path in EXTRA_CSV_SOURCES:
+        if path.exists():
+            print(f"讀取段落來源：{path.name}")
+            with path.open(encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f)
+                extra_rows = {row["ID"]: row for row in reader if row.get("ID")}
+            # 額外來源不該動到主要 CSV 已經有的 ID（例如碰巧共用了同一個來源代碼
+            # 前綴）——目前各來源代碼前綴互斥（97 vs 92／98），理論上不會撞，
+            # 撞到印出警告總比悄悄覆蓋掉既有資料好察覺。
+            collisions = set(extra_rows) & set(rows)
+            if collisions:
+                print(
+                    f"⚠️ {path.name} 有 {len(collisions)} 筆 ID 跟既有段落來源重複，"
+                    f"將被覆蓋（前 5 筆：{sorted(collisions)[:5]}）"
+                )
+            rows.update(extra_rows)
+
+    return rows
 
 
 def _load_classified_records() -> list[dict]:
@@ -91,6 +124,9 @@ def build_corpus() -> None:
             if code_of(notion_id) == "98":
                 paper_index = notion_id.split("-")[1]
                 source = format_paper_citation(paper_index, page) or source
+            elif code_of(notion_id) == "97":
+                paper_index = notion_id.split("-")[1]
+                source = format_journal_citation(paper_index, page) or source
 
             entry = {
                 "id": notion_id,

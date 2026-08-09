@@ -5,8 +5,9 @@ from pathlib import Path
 # 專案根目錄（config 在 src/ 時，上層為根）
 ROOT = Path(__file__).resolve().parent.parent
 
-# 輸入
-PAPER_DIR = ROOT / "paper"
+# 輸入（學位論文 PDF，來源代碼 98；期刊論文另外走 export_paragraphs_journal.py，
+# 見 CLAUDE.md「id／source 欄位格式」段落）
+PAPER_DIR = ROOT / "paper" / "碩博士論文"
 CATEGORY_FILE = ROOT / "This_plan" / "類別.txt"
 KEYWORDS_FILE = ROOT / "This_plan" / "類別關鍵字.json"
 
@@ -54,3 +55,12 @@ SECTION_BREAK_PATTERNS = (
     r"(?<=[。\n])[一二三四五六七八九十][、．.]",             # 一、二、 需前有句號
     r"[（(](?:[一二三四五六七八九十]|\d{1,2})[）)]",        # （一）(1) 排除年份如(2003)
 )
+
+# 期刊論文（代碼 97）專用：章節編號習慣跟學位論文不同（常用「一、」而非「壹、」），
+# 且標題常因 PDF 排版被拆成多行（例如「一、前」與「言」變兩行），BODY_START 除了
+# 關鍵字比對，還會用「阿拉伯數字章節編號」正則輔助判斷起點，見
+# src/export_paragraphs_journal.py。純新增，不影響既有 BODY_START_KEYWORDS 等常數
+# 服務的學位論文流程。
+JOURNAL_BODY_START_KEYWORDS = ("前言", "緒論", "研究背景", "研究動機", "Introduction")
+JOURNAL_BODY_END_KEYWORDS = ("參考文獻", "Reference", "REFERENCES", "引用文獻", "附錄")
+JOURNAL_SECTION_HEADING_RE = r"^([一二三四五六七八九十]+[、．.]|\d{1,2}[、．.](?!\d))"

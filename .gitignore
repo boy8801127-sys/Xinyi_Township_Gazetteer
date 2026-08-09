@@ -54,3 +54,9 @@ ppt/
 # 內容是 results/、labeled_corpus.jsonl、images/、vectorstore/ 的複本，
 # 跟這些原始目錄一樣不該進版控
 backup/
+
+# Tesseract OCR 繁體中文語言包（~13MB 二進位模型檔，從
+# https://github.com/tesseract-ocr/tessdata_best 下載，見
+# src/export_paragraphs_journal.py 的 _ocr_pdf_lines()；系統沒有權限寫進
+# C:\Program Files\Tesseract-OCR\tessdata\ 所以放在專案內、用 TESSDATA_PREFIX 指過去）
+tessdata/

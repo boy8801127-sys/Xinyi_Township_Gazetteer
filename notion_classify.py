@@ -42,7 +42,12 @@ from notion_client import Client
 
 load_dotenv()
 
-claude  = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+# ANTHROPIC_API_KEY 用 .get() 而不是 [...]：classify_journal_with_gemini.py 會
+# import 這個模組沿用 CATEGORIES／SYSTEM_PROMPT／Notion 讀寫輔助函式等共用物件，
+# 但刻意不用 Claude（改用 Gemini 省成本），不該因為沒設 ANTHROPIC_API_KEY 就連
+# import 都失敗；真的呼叫 claude.messages.create(...) 時如果金鑰是空字串，
+# Anthropic SDK 自己會丟出清楚的認證錯誤，不需要在這裡提前擋。
+claude  = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
 notion  = Client(auth=os.environ["NOTION_API_KEY"])
 
 ROOT            = Path(__file__).resolve().parent

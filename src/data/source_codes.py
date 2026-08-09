@@ -30,6 +30,7 @@ SOURCE_CODES: dict[str, str] = {
 # 上線前，先決定它該併入既有分類還是新增分類，再在這裡補上對照，否則一律落入「其他」。
 SOURCE_TYPE_DISPLAY: dict[str, str] = {
     "98": "論文",
+    "97": "論文",  # 期刊論文，性質上跟學位論文一樣是學術論文，併入同一粗分類
     "92": "書籍",
 }
 
@@ -39,7 +40,7 @@ _DEFAULT_SOURCE_TYPE = "其他"
 # 見 src/data/paper_bibliography.py::format_paper_citation()）。顯示引用時如果
 # 還另外加印「第 X 頁」會造成頁碼重複，這裡集中管理，之後新增的來源類型如果
 # 也採用內含頁碼的格式，記得加進這個集合。
-_SOURCE_INCLUDES_PAGE = {"98"}
+_SOURCE_INCLUDES_PAGE = {"98", "97"}
 
 
 def code_of(entry_id: str) -> str:

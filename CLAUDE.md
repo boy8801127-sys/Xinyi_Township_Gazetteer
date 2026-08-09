@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 「鄉志慧編（XinyiRAG）」：從碩博士論文 PDF 擷取、分類、標註《南投縣信義鄉志》編纂用的段落，並在這份已分類語料之上疊了一系列 AI 工程技術展示模組（RAG、LangChain chain/agent、Agentic RAG 問答、本地 fine-tuning），另外部署了一個公開的 Gradio + Cloud Run 展示網站。README.md 對每個模組都有完整說明（動機、架構圖、實測數據、CLI 用法），這份文件著重在「跨模組才看得出來」的整體架構與慣例。
 
-輸入：`paper/` 目錄下的論文 PDF（檔名前綴數字即為論文 ID，如 `01-xxx.pdf`）
+輸入：`paper/碩博士論文/` 底下的學位論文 PDF（檔名前綴數字即為論文 ID，如 `01-xxx.pdf`，對應來源代碼 `98`）；`paper/期刊論文/` 底下是另一批期刊論文 PDF（檔名無數字前綴，對應來源代碼 `97`／華藝，走獨立的 `src/export_paragraphs_journal.py` 擷取分段流程，已完成「擷取＋分段→人工複核→Gemini 分類→匯入 Notion→併入 labeled_corpus.jsonl／向量庫」全流程，見下方「id／source 欄位格式」段落）
 
 ## 執行方式
 
@@ -23,7 +23,7 @@ python main.py
 # CLI 直接執行分類流程（非互動）
 python -m src.run_pipeline
 python -m src.run_pipeline --max-pdfs 3
-python -m src.run_pipeline --single paper/01-xxx.pdf
+python -m src.run_pipeline --single paper/碩博士論文/01-xxx.pdf
 
 # Notion 自動分類（產生 results/*.json，是後續所有 AI 模組的語料來源）
 python notion_classify.py --first-only --dry-run
@@ -50,7 +50,7 @@ Windows 若 `pip install` 出現 `UnicodeDecodeError: 'cp950' codec can't decode
 ### 資料主幹：一份語料，多個模組共用
 
 ```
-paper/*.pdf
+paper/碩博士論文/*.pdf
    │
    ├─（main.py 選項 1~6）→ extract_pdf → segment_and_annotate → classify_and_export → output/*.csv
    │                                                                                  （關鍵字比對分類，獨立產出，不餵給下游 AI 模組）
@@ -97,21 +97,14 @@ paper/*.pdf
 
 | Hook | 攔截什麼 | 動作 |
 |------|----------|------|
-| `cost_warning.py` | 已知的付費 API 呼叫模式（`classify_chain`／`classify_agent`／`generate_qa`／`notion_classify.py`／`build_index`／`query_engine` 等） | 轉成需要確認的權限提示，附上**基於真實 token 用量換算**的花費估計（每個估計背後都有一次真實呼叫的來源記錄在檔案開頭 docstring） |
-| `destructive_confirm.py` | 刪除核心語料／向量庫（`vectorstore/chroma`、`labeled_corpus.jsonl`、`results/`、`images/books/`、`backup/`）、`git push` 到 master/main 或帶 `--force`、會真的寫回 Notion 的指令（`notion_classify.py` 非 `--dry-run`、`migrate_notion_ids.py`） | 轉成需要確認的權限提示 |
+| `cost_warning.py` | 已知的付費 API 呼叫模式（`classify_chain`／`classify_agent`／`generate_qa`／`notion_classify.py`／`classify_journal_with_gemini --run`／`build_index`／`query_engine` 等） | 轉成需要確認的權限提示，附上**基於真實 token 用量換算**的花費估計（每個估計背後都有一次真實呼叫的來源記錄在檔案開頭 docstring） |
+| `destructive_confirm.py` | 刪除核心語料／向量庫（`vectorstore/chroma`、`labeled_corpus.jsonl`、`results/`、`images/books/`、`backup/`）、`git push` 到 master/main 或帶 `--force`、會真的寫回 Notion 的指令（`notion_classify.py` 非 `--dry-run`、`migrate_notion_ids.py`、`classify_journal_with_gemini --run` 非 `--dry-run`） | 轉成需要確認的權限提示 |
 | `corpus_auto_backup.py` | 會覆寫 `labeled_corpus.jsonl` 或 Chroma 向量庫的腳本（`build_labeled_corpus`／`extract_books`／`build_index`／`add_to_index`／`patch_metadata`／`migrate_ids`／`migrate_vectorstore_ids`／`rename_migrated_images`／`promote_reviewed_images`） | 先自動跑 `python -m src.data.backup_corpus`（成功就靜默放行，失敗才轉成確認提示）；另外只動到 `vectorstore/chroma`／`deploy/rag_space/vectorstore/chroma` 其中一份時會提醒兩份是手動同步、記得同步過去 |
 | `deploy_checklist.py` | `gcloud run deploy`／`gcloud builds submit` | 提醒確認「語意空間視覺化、語料庫分析、資料來源、技術說明、更新日誌」5 個分頁／artifact 內容是否要同步更新；`gcloud run deploy` 沒帶 `--memory=` 會額外提醒（見 `deploy/rag_space/KNOWN_ISSUES.md` 的 1Gi 記憶體不足教訓） |
 
 新增會呼叫付費 API／刪除或寫回共用資料／覆寫語料庫的腳本或指令模式時，記得同步在對應的 hook 加分支。`src/data/backup_corpus.py` 是 `corpus_auto_backup.py` 呼叫的通用備份工具（帶時間戳記、預設只保留最近 5 份，避免每次觸發都佔用大量硬碟空間），也可以手動執行：`python -m src.data.backup_corpus`。
 
 ### `src/config.py`：分類流程集中設定
-
-| 參數 | 說明 |
-|------|------|
-| `FOOTNOTE_Y_RATIO` | 頁底注腳分離閾值（預設 0.80） |
-| `MAX_PARAGRAPH_LENGTH` / `MIN_PARAGRAPH_LENGTH` | 段落切分的字數上下限 |
-| `BODY_END_KEYWORDS` | 停止擷取的關鍵字（如「參考文獻」） |
-| `SECTION_BREAK_PATTERNS` | 章節切分 regex（章 > 節 > 小節優先） |
 
 `export_paragraphs.py`（v2）的 `run_on_paper_dir_for_paragraphs` 實際上內部呼叫的是 `export_paragraphs_v1.py` 的狀態機實作，v2 自己的 `extract_paragraphs_from_pdf` 目前只是備用、未串進主流程——改這塊之前先確認實際呼叫路徑。
 
@@ -121,6 +114,7 @@ paper/*.pdf
 
 - 論文（代碼 `98`，信義鄉布農族博碩士論文）：PDF 檔名以數字開頭（`01-`、`02-`…）對應論文序號，id 如 `98-11-200`。序號有缺號（03、04…）代表該論文尚未收入。`source` 欄位是腳註引用格式（`作者，〈篇名〉（學校地：系所，畢業年），頁X。`），書目資料存在 `src/data/paper_bibliography.json`（由 `src/data/build_paper_bibliography.py` 一次性從 `paper/信義鄉布農族博碩士論文.docx`＋`paper/台灣大專院校地址名冊.xls` 解析產生，之後新增的論文直接手動補一筆進 json，不用重跑該腳本），組裝邏輯在 `src/data/paper_bibliography.py::format_paper_citation()`。
 - 縣志（代碼 `92`，南投縣志稿＆南投縣志＆續修南投縣志）：id 如 `92-01-079`，`source` 欄位維持 `南投縣志｜卷別 篇名｜條目名` 格式，不套用腳註格式。
+- 期刊論文（代碼 `97`，華藝）：PDF 放在 `paper/期刊論文/`（檔名無數字前綴，序號依檔名排序 1~13，見 `paper/期刊論文/書目資料清單.csv`，已填妥），走獨立的 `src/export_paragraphs_journal.py`（呼叫 `export_paragraphs_v1.py::extract_paragraphs_from_pdf()` 新增的選用參數，傳入期刊專用的 `config.JOURNAL_BODY_START_KEYWORDS`／`JOURNAL_SECTION_HEADING_RE` 等設定，不影響學位論文既有呼叫路徑）擷取分段→人工複核（`split_and_merge_paragraphs_xlsx.py`／`merge_paragraph_rows.py`，比照學位論文的 Excel 合併儲存格慣例）→`src/data/classify_journal_with_gemini.py`（Gemini 分類、寫回 Notion）→`src/data/build_labeled_corpus.py` 的 `code_of(id) == "97"` 分支併入 `labeled_corpus.jsonl`。`source` 欄位引用格式由 `src/data/journal_bibliography.py::format_journal_citation()` 讀 `書目資料清單.csv` 組裝，格式跟論文一樣內含頁碼。全流程（含向量庫）已完成，目前 454 筆（13 篇）已在服役中的語料庫裡。
 - `build_index.py` 的 `source_type`（UI／CLI 篩選用的「論文」／「書籍」粗分類）改用 `source_codes.py::source_type_for_id()` 查表，不要再用 id 前綴字母判斷。
 
 ### 部署（`deploy/rag_space/`）
