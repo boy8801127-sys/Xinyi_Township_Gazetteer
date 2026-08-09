@@ -27,6 +27,12 @@
             "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/deploy_checklist.py\"",
             "timeout": 10,
             "statusMessage": "檢查部署前清單…"
+          },
+          {
+            "type": "command",
+            "command": "python \"${CLAUDE_PROJECT_DIR}/.claude/hooks/deploy_review_reminder.py\"",
+            "timeout": 10,
+            "statusMessage": "檢查部署前是否要先做 code-review／doctor…"
           }
         ]
       }
