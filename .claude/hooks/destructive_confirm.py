@@ -108,6 +108,12 @@ def _check_notion_write(cmd: str) -> str | None:
         return "⚠️ 這個指令會把分類結果實際寫回 Notion 資料庫（線上共用資料）。確定要繼續嗎？（--dry-run 可以先看結果不寫回）"
     if "classify_journal_with_gemini" in cmd and "--run" in cmd and "--dry-run" not in cmd:
         return "⚠️ 這個指令會把期刊論文分類結果實際寫回 Notion 資料庫（線上共用資料）。確定要繼續嗎？（--dry-run 可以先看結果不寫回）"
+    if "classify_paper_with_gemini" in cmd and "--run" in cmd and "--dry-run" not in cmd:
+        return "⚠️ 這個指令會把學位論文分類結果實際寫回 Notion 資料庫（線上共用資料）。確定要繼續嗎？（--dry-run 可以先看結果不寫回）"
+    if "import_paragraphs_to_notion" in cmd and "--run" in cmd:
+        if "--database-id" in cmd:
+            return "⚠️ 這個指令會接續寫入既有 Notion database（續傳模式，已匯入的列會自動略過）。確定要繼續嗎？（--dry-run 可以先預覽）"
+        return "⚠️ 這個指令會在 Notion 母頁面底下新建一個 database 並寫入整批段落（線上共用資料；若中途失敗要重跑，改用 --database-id 續傳，否則會產生重複的 database）。確定要繼續嗎？（--dry-run 可以先預覽）"
     return None
 
 

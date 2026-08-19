@@ -36,6 +36,11 @@ CSV_CANDIDATES = [
 # 額外合併讀入即可。之後其他來源代碼若也有類似獨立複核流程，比照這裡加一行。
 EXTRA_CSV_SOURCES = [
     OUTPUT_DIR / "paragraphs_journal_final.csv",
+    # 第 81 篇學位論文（2026-08 新增）走 export_paragraphs_single_paper.py 的單篇流程，
+    # 一樣不寫進 paragraphs_all_merged.csv（那份是已經匯入 Notion 的既有 60 篇），
+    # 所以比照期刊在這裡多掛一份。這篇的 PDF 文字層另外有字型錯字問題，段落是套用
+    # src/data/glyph_fix/98-81.json 修正後才擷取的，見 docs/glyph_fix_98-81.md。
+    OUTPUT_DIR / "paragraphs_paper_98-81_final.csv",
 ]
 
 

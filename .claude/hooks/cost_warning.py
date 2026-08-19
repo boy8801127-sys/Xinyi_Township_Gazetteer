@@ -160,10 +160,15 @@ def main() -> None:
             f"1000 筆約 ${per_item * 1000:.2f} USD。"
         )
 
-    elif "classify_journal_with_gemini" in cmd and "--run" in cmd:
+    elif (
+        "classify_journal_with_gemini" in cmd or "classify_paper_with_gemini" in cmd
+    ) and "--run" in cmd:
         # --estimate-cost 模式完全不呼叫付費 API（純本機用真實歷史 token 均價換算），
         # 故意不攔——只有 --run 才真的會打 Gemini API，比照 notion_classify.py 的精神。
-        reason = "會呼叫 Gemini API（gemini-flash-lite-latest）對期刊論文段落做分類與關鍵字擷取"
+        # 期刊論文（97）與單篇學位論文（98）兩支腳本同一套分類任務、同一個模型與定價，
+        # 估算方式完全一樣，共用這個分支。
+        target = "期刊論文" if "classify_journal_with_gemini" in cmd else "學位論文"
+        reason = f"會呼叫 Gemini API（gemini-flash-lite-latest）對{target}段落做分類與關鍵字擷取"
         reason += "。" if "--dry-run" in cmd else "，並寫回 Notion。"
         per_item = _token_cost(
             NOTION_INPUT_TOKENS_PER_ITEM, NOTION_OUTPUT_TOKENS_PER_ITEM,
