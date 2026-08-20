@@ -181,6 +181,23 @@ def main() -> None:
             f"500 筆約 ${per_item * 500:.2f} USD）。"
         )
 
+    elif "classify_csv_with_gemini" in cmd and "--run" in cmd and "--dry-run" not in cmd:
+        # 這支跟上面 classify_journal_with_gemini／classify_paper_with_gemini 不同：
+        # 直接對本機 CSV 做分類、寫回同一個 CSV，不經過 Notion，--dry-run 會直接跳過
+        # API 呼叫（不像上面兩支 --dry-run 只跳過寫回 Notion、仍會打 API），所以這裡
+        # 排除 --dry-run 的組合，只攔真的會呼叫 API 的情況。
+        reason = "會呼叫 Gemini API（gemini-flash-lite-latest）對 CSV 裡的段落做分類與關鍵字擷取，結果寫回同一個本機 CSV 檔（不寫回 Notion）。"
+        per_item = _token_cost(
+            NOTION_INPUT_TOKENS_PER_ITEM, NOTION_OUTPUT_TOKENS_PER_ITEM,
+            GEMINI_FLASH_LITE_LATEST_INPUT_RATE, GEMINI_FLASH_LITE_LATEST_OUTPUT_RATE,
+        )
+        estimate = (
+            f"沿用 notion_classify.py 對 10,099 筆既有資料的真實平均 token 用量換算"
+            f"（同一套 SYSTEM_PROMPT／分類任務），每筆約 ${per_item:.5f} USD，"
+            f"實際花費依待分類筆數而定（例如 50 筆約 ${per_item * 50:.2f} USD、"
+            f"100 筆約 ${per_item * 100:.2f} USD）。"
+        )
+
     elif "build_index" in cmd:
         reason = "會呼叫 Voyage AI 對全部段落做 embedding，建立／覆寫向量索引。"
         estimate = (

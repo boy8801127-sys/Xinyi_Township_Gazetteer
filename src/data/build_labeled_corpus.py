@@ -41,6 +41,13 @@ EXTRA_CSV_SOURCES = [
     # 所以比照期刊在這裡多掛一份。這篇的 PDF 文字層另外有字型錯字問題，段落是套用
     # src/data/glyph_fix/98-81.json 修正後才擷取的，見 docs/glyph_fix_98-81.md。
     OUTPUT_DIR / "paragraphs_paper_98-81_final.csv",
+    # 理蕃之友／理蕃誌稿（代碼 93，2026-08 新增）：人工先在 Excel/CSV 範本填好段落／
+    # 來源／頁數，直接用 src/data/classify_csv_with_gemini.py 對本機 CSV 做分類（不經
+    # 過既有的「先匯入 Notion 空白頁面、再跑 classify_*_with_gemini.py 補分類」兩階段
+    # 流程），分類完才用 src/data/import_csv_to_notion.py 一次連分類結果匯入 Notion。
+    # 6 卷分別建了各自的 child database；src/data/build_93_final_csv.py 把 6 份卷別
+    # CSV 合併成這裡讀取用的單一份 final CSV（欄位改回 ID／段落／頁數／來源文章）。
+    OUTPUT_DIR / "paragraphs_93_final.csv",
 ]
 
 
